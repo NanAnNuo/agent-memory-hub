@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent Memory Hub</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="mesh"></div>
+    <aside class="rail">
+      <div class="mark">AMH</div>
+      <button class="tab active" data-view="overview">总览</button>
+      <button class="tab" data-view="conversations">会话</button>
+      <button class="tab" data-view="memory">记忆</button>
+      <button class="tab" data-view="skills">Skills</button>
+      <button class="tab" data-view="exports">导出</button>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="kicker">LOCAL AGENT MEMORY WORKBENCH</p>
+          <h1>Agent Memory Hub</h1>
+        </div>
+        <div class="status-chip">
+          <span id="pulse" class="pulse"></span>
+          <div><strong id="syncState">连接中</strong><small id="syncTime">--</small></div>
+        </div>
+      </header>
+
+      <section id="overview" class="view active">
+        <div id="stats" class="stats"></div>
+        <div class="two-col">
+          <article class="panel">
+            <header><h2>EverCore</h2><button id="syncEverCore">同步到 EverCore</button></header>
+            <div id="evercoreStatus" class="body"></div>
+          </article>
+          <article class="panel">
+            <header><h2>最近任务</h2><span id="taskCount"></span></header>
+            <div id="tasks" class="feed"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="conversations" class="view">
+        <form id="sessionFilters" class="toolbar">
+          <select id="clientFilter">
+            <option value="">全部 Agent</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+            <option value="opencode">OpenCode</option>
+          </select>
+          <input id="projectFilter" placeholder="项目路径过滤">
+          <input id="search" placeholder="关键词搜索">
+          <button type="submit">搜索片段</button>
+          <button type="button" id="refresh">立即同步</button>
+        </form>
+        <div class="split">
+          <article class="panel"><header><h2>会话</h2><span id="sessionCount"></span></header><div id="sessions" class="feed tall"></div></article>
+          <article class="panel"><header><h2>详情 / 命中</h2><span id="resultCount">待查询</span></header><div id="details" class="feed tall empty">选择会话或搜索关键词</div></article>
+        </div>
+      </section>
+
+      <section id="memory" class="view">
+        <form id="memoryForm" class="toolbar">
+          <input id="memoryQuery" placeholder="查询 EverCore agent_memory">
+          <select id="memoryMethod">
+            <option value="hybrid">hybrid</option>
+            <option value="vector">vector</option>
+            <option value="keyword">keyword</option>
+            <option value="rrf">rrf</option>
+          </select>
+          <button type="submit">检索记忆</button>
+        </form>
+        <div class="split">
+          <article class="panel"><header><h2>Agent Cases</h2></header><div id="memoryCases" class="feed tall empty">暂无查询</div></article>
+          <article class="panel"><header><h2>Agent Skills</h2></header><div id="memorySkills" class="feed tall empty">暂无查询</div></article>
+        </div>
+      </section>
+
+      <section id="skills" class="view">
+        <form id="candidateForm" class="panel form-panel">
+          <header><h2>创建候选 Skill</h2></header>
+          <div class="form-grid">
+            <input id="candTitle" placeholder="标题">
+            <select id="candScope"><option value="project">project</option><option value="global">global</option></select>
+            <input id="candProject" placeholder="项目根目录（project 必填）">
+            <input id="candRule" placeholder="复用触发规则">
+            <textarea id="candLesson" placeholder="可复用经验"></textarea>
+            <textarea id="candEvidence" placeholder="证据，每行一条"></textarea>
+          </div>
+          <button type="submit">生成待审核候选</button>
+        </form>
+        <article class="panel"><header><h2>待审核候选</h2><span id="candidateCount"></span></header><div id="candidates" class="feed tall"></div></article>
+      </section>
+
+      <section id="exports" class="view">
+        <form id="exportForm" class="toolbar">
+          <input id="exportSessionId" placeholder="session_id">
+          <select id="exportFormat"><option value="markdown">Markdown</option><option value="json">JSON</option></select>
+          <button type="submit">导出并下载</button>
+        </form>
+        <article class="panel"><header><h2>导出预览</h2></header><pre id="exportPreview" class="preview">等待导出</pre></article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

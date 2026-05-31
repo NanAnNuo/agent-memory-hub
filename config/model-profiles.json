@@ -1,0 +1,39 @@
+{
+  "profiles": {
+    "codex_light_research": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "role": "read-only research and verification",
+      "contextWindowTokens": 128000,
+      "historicalTextRatio": 0.6
+    },
+    "codex_bounded_coding": {
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "role": "bounded implementation and testing",
+      "contextWindowTokens": 128000,
+      "historicalTextRatio": 0.6
+    },
+    "codex_complex_review": {
+      "agent": "codex",
+      "model": "gpt-5.5",
+      "role": "architecture and high-risk review",
+      "contextWindowTokens": 128000,
+      "historicalTextRatio": 0.6
+    },
+    "claude_collaborator": {
+      "agent": "claude",
+      "model": "deepseek-v4-flash",
+      "role": "independent collaborator",
+      "contextWindowTokens": 100000,
+      "historicalTextRatio": 0.6
+    },
+    "opencode_collaborator": {
+      "agent": "opencode",
+      "role": "independent collaborator",
+      "contextWindowTokens": 100000,
+      "historicalTextRatio": 0.6
+    }
+  },
+  "note": "Context limits are operational defaults. Update this file when configured provider limits change."
+}
