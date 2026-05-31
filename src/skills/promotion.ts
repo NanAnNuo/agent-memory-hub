@@ -1,15 +1,16 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ArchiveStore } from "../archive/store.js";
-import type { SkillCandidate } from "../archive/types.js";
+import type { HubPaths } from "../shared/config.js";
+import type { HubSkill, SkillCandidate } from "../archive/types.js";
 
 export interface PromotionTarget {
-  label: "codex" | "claude" | "project";
+  label: "hub-global" | "hub-project";
   path: string;
 }
 
-export function promoteSkillCandidate(store: ArchiveStore, candidateId: string, approved: boolean): SkillCandidate {
+export function promoteSkillCandidate(store: ArchiveStore, paths: HubPaths, candidateId: string, approved: boolean): SkillCandidate {
   if (!approved) {
     throw new Error("Skill promotion requires approved=true.");
   }
@@ -27,44 +28,49 @@ export function promoteSkillCandidate(store: ArchiveStore, candidateId: string, 
     throw new Error(`Candidate target is ${candidate.promotionTarget}; this endpoint promotes skills only.`);
   }
 
-  const targets = resolvePromotionTargets(candidate);
-  for (const target of targets) {
-    mkdirSync(dirname(target.path), { recursive: true });
-    writeFileSync(target.path, renderSkill(candidate), "utf8");
-  }
+  const target = resolvePromotionTarget(paths, candidate);
+  mkdirSync(dirname(target.path), { recursive: true });
+  writeFileSync(target.path, renderSkill(candidate), "utf8");
+  const slug = slugify(candidate.title);
+  const projectHash = candidate.scope === "project" ? hashProject(candidate.projectRoot ?? "") : null;
+  const skill = store.putHubSkill({
+    skillId: `skill-${candidate.candidateId}`,
+    scope: candidate.scope,
+    title: candidate.title,
+    slug,
+    projectRoot: candidate.projectRoot ? resolve(candidate.projectRoot) : null,
+    projectHash,
+    path: target.path,
+    reuseRule: candidate.reuseRule,
+    sourceCandidateId: candidate.candidateId,
+    sourceSessionId: evidenceSession(candidate.evidence)
+  });
   return store.putSkillCandidate({
     ...candidate,
     status: "promoted",
-    targetPath: targets.map((target) => `${target.label}:${target.path}`).join("; "),
+    targetPath: `${target.label}:${skill.path}`,
     promotedAt: new Date().toISOString()
   });
 }
 
-export function resolvePromotionTargets(candidate: SkillCandidate): PromotionTarget[] {
-  const slug = candidate.scope === "global" ? `learned-${slugify(candidate.title)}` : slugify(candidate.title);
+export function resolvePromotionTarget(paths: HubPaths, candidate: SkillCandidate): PromotionTarget {
+  const slug = slugify(candidate.title);
   if (candidate.scope === "global") {
-    const roots = globalSkillRoots();
-    return [
-      { label: "codex", path: join(roots.codex, slug, "SKILL.md") },
-      { label: "claude", path: join(roots.claude, slug, "SKILL.md") }
-    ];
+    return { label: "hub-global", path: join(paths.skillsDir, "global", slug, "SKILL.md") };
   }
-  return [{ label: "project", path: join(projectSkillDir(candidate), "SKILL.md") }];
-}
-
-function projectSkillDir(candidate: SkillCandidate): string {
   if (!candidate.projectRoot) {
     throw new Error("Project skill promotion requires project_root.");
   }
-  return join(resolve(candidate.projectRoot), ".project-skills", slugify(candidate.title));
+  return { label: "hub-project", path: join(paths.skillsDir, "projects", hashProject(candidate.projectRoot), slug, "SKILL.md") };
 }
 
 function renderSkill(candidate: SkillCandidate): string {
-  const name = candidate.scope === "global" ? `learned-${slugify(candidate.title)}` : slugify(candidate.title);
   return [
     "---",
-    `name: ${name}`,
+    `name: ${slugify(candidate.title)}`,
     `description: ${singleLine(candidate.reuseRule || candidate.title)}`,
+    `scope: ${candidate.scope}`,
+    candidate.projectRoot ? `project_root: ${candidate.projectRoot}` : "",
     "---",
     "",
     `# ${candidate.title}`,
@@ -78,20 +84,22 @@ function renderSkill(candidate: SkillCandidate): string {
     "## Evidence",
     "",
     ...candidate.evidence.map((item) => `- ${item}`)
-  ].join("\n");
+  ].filter((line) => line !== "").join("\n");
 }
 
-function slugify(value: string): string {
+export function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 56) || "skill";
+}
+
+export function hashProject(value: string): string {
+  return createHash("sha256").update(resolve(value)).digest("hex").slice(0, 16);
 }
 
 function singleLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function globalSkillRoots(): { codex: string; claude: string } {
-  return {
-    codex: process.env.AGENT_HUB_CODEX_SKILLS_DIR ?? join(homedir(), ".codex", "skills"),
-    claude: process.env.AGENT_HUB_CLAUDE_SKILLS_DIR ?? join(homedir(), "AppData", "Local", "Claude-3p", "skills")
-  };
+function evidenceSession(evidence: string[]): HubSkill["sourceSessionId"] {
+  const match = evidence.join("\n").match(/\b(?:codex|claude|opencode)-[a-z0-9-]+/i);
+  return match?.[0] ?? null;
 }

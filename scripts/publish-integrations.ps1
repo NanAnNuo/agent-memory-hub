@@ -61,10 +61,9 @@ if ($ApplyRules) {
 if ($PublishPortableSkills) {
     if (-not (Test-Path -LiteralPath $aghub)) { throw "AGHub CLI is missing: $aghub" }
     $skills = [ordered]@{}
-    foreach ($root in @((Join-Path $HOME '.codex\skills'), (Join-Path $env:LOCALAPPDATA 'Claude-3p\skills'))) {
+    foreach ($root in @((Join-Path $DataRoot 'skills\global'), (Join-Path $DataRoot 'skills\projects'))) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
-        foreach ($directory in Get-ChildItem -LiteralPath $root -Directory) {
-            if ($directory.Name -eq '.system') { continue }
+        foreach ($directory in Get-ChildItem -LiteralPath $root -Directory -Recurse) {
             if ((Test-Path -LiteralPath (Join-Path $directory.FullName 'SKILL.md')) -and -not $skills.Contains($directory.Name)) {
                 $skills[$directory.Name] = $directory.FullName
             }
@@ -80,7 +79,7 @@ if ($PublishPortableSkills) {
         }
         $published += 1
     }
-    Write-Output "Submitted $published deduplicated portable Codex/Claude skills to AGHub targets claude and opencode; existing managed entries are left unchanged if already present."
+    Write-Output "Submitted $published Hub-managed skills to AGHub targets claude and opencode; native agent skill directories were not scanned."
 }
 
 if ($RegisterMcp) {

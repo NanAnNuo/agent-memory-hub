@@ -1,4 +1,3 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,16 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getHubPaths, ensureHubDirectories } from "../src/shared/config.js";
 import { importJsonlFile } from "../src/archive/importers.js";
 import { ArchiveStore } from "../src/archive/store.js";
-import { EverCoreClient, syncPendingEverCoreSessions } from "../src/evercore/client.js";
 import { exportSession } from "../src/archive/export.js";
 import { promoteSkillCandidate } from "../src/skills/promotion.js";
-
-const servers: Array<{ close: () => void }> = [];
+import { buildMemoryFromSession, searchLocalMemory } from "../src/memory/local.js";
 
 afterEach(() => {
-  while (servers.length) {
-    servers.pop()?.close();
-  }
+  delete process.env.AGENT_HUB_SKILLS_DIR;
 });
 
 function setupStore() {
@@ -27,8 +22,8 @@ function setupStore() {
   return { root, sourceRoot, paths, store: new ArchiveStore(paths) };
 }
 
-describe("EverCore sync, export, and skill promotion", () => {
-  it("syncs pending sessions to EverCore once per file fingerprint", async () => {
+describe("Local memory, export, and skill promotion", () => {
+  it("builds searchable local memory from an archived session", async () => {
     const { sourceRoot, store } = setupStore();
     const source = join(sourceRoot, "session.jsonl");
     writeFileSync(source, [
@@ -40,21 +35,9 @@ describe("EverCore sync, export, and skill promotion", () => {
     const imported = importJsonlFile("codex", source, sourceRoot);
     store.ingestSession(imported);
 
-    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
-    const url = await mockEverCore(async (request, response) => {
-      calls.push({ path: request.url ?? "", body: await readBody(request) });
-      json(response, { data: { agent_memory: { cases: [], skills: [] } } });
-    });
-
-    const client = new EverCoreClient({ enabled: true, url, root: sourceRoot, userId: "u-1" });
-    expect(await syncPendingEverCoreSessions(store, client, 10)).toMatchObject({ attempted: 1, synced: 1, failed: 0, messages: 2 });
-    expect(await syncPendingEverCoreSessions(store, client, 10)).toMatchObject({ attempted: 0, synced: 0, failed: 0, messages: 0 });
-    expect(calls.map((call) => call.path)).toEqual(["/api/v1/memories/agent", "/api/v1/memories/agent/flush"]);
-    expect(calls[0].body).toMatchObject({ user_id: "u-1", session_id: imported.sessionId });
-    expect(calls[0].body.messages).toEqual([
-      expect.objectContaining({ role: "user", content: "remember this workflow" }),
-      expect.objectContaining({ role: "assistant", content: "done" })
-    ]);
+    await buildMemoryFromSession(store, imported.sessionId);
+    const result = searchLocalMemory(store, "workflow", undefined, ["case"], 5);
+    expect(result.cases[0]).toMatchObject({ sessionId: imported.sessionId, type: "case" });
     store.close();
   });
 
@@ -103,12 +86,10 @@ describe("EverCore sync, export, and skill promotion", () => {
     store.close();
   });
 
-  it("promotes global and project skills to separate directories", () => {
-    const { root, store } = setupStore();
-    const codexRoot = join(root, "codex-skills");
-    const claudeRoot = join(root, "claude-skills");
-    process.env.AGENT_HUB_CODEX_SKILLS_DIR = codexRoot;
-    process.env.AGENT_HUB_CLAUDE_SKILLS_DIR = claudeRoot;
+  it("promotes global and project skills only into the Hub skill directory", () => {
+    const { root, paths, store } = setupStore();
+    const hubSkillsRoot = paths.skillsDir;
+    process.env.AGENT_HUB_SKILLS_DIR = hubSkillsRoot;
     const projectRoot = join(root, "project");
     mkdirSync(projectRoot, { recursive: true });
     const globalId = "global-candidate";
@@ -138,41 +119,15 @@ describe("EverCore sync, export, and skill promotion", () => {
       projectRoot
     });
 
-    const global = promoteSkillCandidate(store, globalId, true);
-    const project = promoteSkillCandidate(store, projectId, true);
-    expect(global.targetPath).toContain(codexRoot);
-    expect(global.targetPath).toContain(claudeRoot);
-    expect(project.targetPath).toContain(join(projectRoot, ".project-skills"));
-    const globalSlug = `learned-${global.title.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 56)}`;
-    expect(existsSync(join(codexRoot, globalSlug, "SKILL.md"))).toBe(true);
-    expect(existsSync(join(claudeRoot, globalSlug, "SKILL.md"))).toBe(true);
-    expect(readFileSync(join(projectRoot, ".project-skills", "project-only-workflow", "SKILL.md"), "utf8")).toContain("Keep this project-local.");
+    const global = promoteSkillCandidate(store, paths, globalId, true);
+    const project = promoteSkillCandidate(store, paths, projectId, true);
+    expect(global.targetPath).toContain(join(hubSkillsRoot, "global"));
+    expect(project.targetPath).toContain(join(hubSkillsRoot, "projects"));
+    expect(project.targetPath).not.toContain(join(projectRoot, ".project-skills"));
+    expect(existsSync(join(projectRoot, ".project-skills"))).toBe(false);
+    const skills = store.listHubSkills(projectRoot);
+    expect(skills.map((skill) => skill.title)).toContain("Project only workflow");
+    expect(readFileSync(skills.find((skill) => skill.title === "Project only workflow")!.path, "utf8")).toContain("Keep this project-local.");
     store.close();
   });
 });
-
-async function mockEverCore(handler: (request: IncomingMessage, response: ServerResponse) => Promise<void>): Promise<string> {
-  const server = createServer((request, response) => {
-    void handler(request, response);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  servers.push(server);
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Could not bind mock server.");
-  }
-  return `http://127.0.0.1:${address.port}`;
-}
-
-async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-}
-
-function json(response: ServerResponse, value: unknown): void {
-  response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify(value));
-}

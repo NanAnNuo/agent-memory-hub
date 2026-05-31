@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { appendFileSync } from "node:fs";
 import type { HubPaths } from "../shared/config.js";
 import { redactSensitive } from "../shared/redact.js";
-import type { EverCoreSyncRecord, ImportedSession, SessionListItem, SessionManifest, SkillCandidate, StoredEvent, TaskCheckpoint } from "./types.js";
+import type { HubSettings, HubSkill, ImportedSession, MemoryItem, MemorySyncRecord, SessionListItem, SessionManifest, SkillCandidate, StoredEvent, TaskCheckpoint } from "./types.js";
 
 type DatabaseType = InstanceType<typeof Database>;
 
@@ -61,12 +61,48 @@ export class ArchiveStore {
         checkpoint_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS evercore_sync (
+      CREATE TABLE IF NOT EXISTS memory_sync (
         session_id TEXT PRIMARY KEY,
         file_sha256 TEXT NOT NULL,
         status TEXT NOT NULL,
         synced_at TEXT,
         error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS memory_items (
+        memory_id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        project_root TEXT,
+        session_id TEXT,
+        source_anchor TEXT,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(title, summary, tags, memory_id UNINDEXED);
+      CREATE TABLE IF NOT EXISTS hub_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS hub_skills (
+        skill_id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        title TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        project_root TEXT,
+        project_hash TEXT,
+        path TEXT NOT NULL,
+        reuse_rule TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source_candidate_id TEXT,
+        source_session_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_used_at TEXT
       );
       CREATE TABLE IF NOT EXISTS skill_candidates (
         candidate_id TEXT PRIMARY KEY,
@@ -186,7 +222,7 @@ export class ArchiveStore {
       this.db.prepare("INSERT OR REPLACE INTO deleted_sessions(session_id, deleted_at) VALUES (?, ?)").run(sessionId, new Date().toISOString());
       this.db.prepare("DELETE FROM event_fts WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
-      this.db.prepare("DELETE FROM evercore_sync WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM memory_sync WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
     })();
     return { deleted: true };
@@ -238,10 +274,10 @@ export class ArchiveStore {
     return row ? JSON.parse(row.checkpoint_json) as TaskCheckpoint : null;
   }
 
-  getPendingEverCoreManifests(limit: number): SessionManifest[] {
+  getPendingMemoryManifests(limit: number): SessionManifest[] {
     const rows = this.db.prepare(`
       SELECT s.* FROM sessions s
-      LEFT JOIN evercore_sync e ON e.session_id = s.session_id AND e.file_sha256 = s.file_sha256 AND e.status = 'synced'
+      LEFT JOIN memory_sync e ON e.session_id = s.session_id AND e.file_sha256 = s.file_sha256 AND e.status = 'synced'
       WHERE e.session_id IS NULL
       ORDER BY COALESCE(s.last_timestamp, s.ingested_at) ASC
       LIMIT ?
@@ -249,25 +285,177 @@ export class ArchiveStore {
     return rows.map(mapManifest);
   }
 
-  listEverCoreSync(): EverCoreSyncRecord[] {
-    const rows = this.db.prepare("SELECT * FROM evercore_sync ORDER BY synced_at DESC").all() as Array<Record<string, unknown>>;
-    return rows.map(mapEverCoreSync);
+  listMemorySync(): MemorySyncRecord[] {
+    const rows = this.db.prepare("SELECT * FROM memory_sync ORDER BY synced_at DESC").all() as Array<Record<string, unknown>>;
+    return rows.map(mapMemorySync);
   }
 
-  markEverCoreSynced(sessionId: string, fileSha256: string): EverCoreSyncRecord {
+  markMemorySynced(sessionId: string, fileSha256: string): MemorySyncRecord {
     this.db.prepare(`
-      INSERT INTO evercore_sync(session_id, file_sha256, status, synced_at, error) VALUES (?, ?, 'synced', ?, NULL)
+      INSERT INTO memory_sync(session_id, file_sha256, status, synced_at, error) VALUES (?, ?, 'synced', ?, NULL)
       ON CONFLICT(session_id) DO UPDATE SET file_sha256=excluded.file_sha256, status='synced', synced_at=excluded.synced_at, error=NULL
     `).run(sessionId, fileSha256, new Date().toISOString());
-    return this.listEverCoreSync().find((record) => record.sessionId === sessionId)!;
+    return this.listMemorySync().find((record) => record.sessionId === sessionId)!;
   }
 
-  markEverCoreFailed(sessionId: string, fileSha256: string, error: string): EverCoreSyncRecord {
+  markMemoryFailed(sessionId: string, fileSha256: string, error: string): MemorySyncRecord {
     this.db.prepare(`
-      INSERT INTO evercore_sync(session_id, file_sha256, status, synced_at, error) VALUES (?, ?, 'failed', ?, ?)
+      INSERT INTO memory_sync(session_id, file_sha256, status, synced_at, error) VALUES (?, ?, 'failed', ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET file_sha256=excluded.file_sha256, status='failed', synced_at=excluded.synced_at, error=excluded.error
     `).run(sessionId, fileSha256, new Date().toISOString(), error);
-    return this.listEverCoreSync().find((record) => record.sessionId === sessionId)!;
+    return this.listMemorySync().find((record) => record.sessionId === sessionId)!;
+  }
+
+  putMemoryItem(item: Omit<MemoryItem, "createdAt" | "updatedAt" | "status"> & Partial<Pick<MemoryItem, "createdAt" | "updatedAt" | "status">>): MemoryItem {
+    const now = new Date().toISOString();
+    const complete: MemoryItem = {
+      ...item,
+      status: item.status ?? "active",
+      createdAt: item.createdAt ?? now,
+      updatedAt: item.updatedAt ?? now
+    };
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO memory_items(memory_id, type, scope, project_root, session_id, source_anchor, title, summary, tags_json, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET
+          type=excluded.type, scope=excluded.scope, project_root=excluded.project_root, session_id=excluded.session_id,
+          source_anchor=excluded.source_anchor, title=excluded.title, summary=excluded.summary, tags_json=excluded.tags_json,
+          status=excluded.status, updated_at=excluded.updated_at
+      `).run(
+        complete.memoryId,
+        complete.type,
+        complete.scope,
+        complete.projectRoot,
+        complete.sessionId,
+        complete.sourceAnchor,
+        complete.title,
+        complete.summary,
+        JSON.stringify(complete.tags),
+        complete.status,
+        complete.createdAt,
+        complete.updatedAt
+      );
+      this.db.prepare("DELETE FROM memory_fts WHERE memory_id = ?").run(complete.memoryId);
+      this.db.prepare("INSERT INTO memory_fts(title, summary, tags, memory_id) VALUES (?, ?, ?, ?)").run(complete.title, complete.summary, complete.tags.join(" "), complete.memoryId);
+    })();
+    return complete;
+  }
+
+  searchMemory(query: string, projectRoot?: string, types: string[] = [], limit = 20): MemoryItem[] {
+    const clauses = ["m.status = 'active'"];
+    const args: unknown[] = [];
+    if (query.trim()) {
+      clauses.push("memory_fts MATCH ?");
+      args.push(`"${query.replaceAll('"', '""')}"`);
+    }
+    if (projectRoot) {
+      clauses.push("(m.scope = 'global' OR m.project_root = ?)");
+      args.push(projectRoot);
+    }
+    if (types.length) {
+      clauses.push(`m.type IN (${types.map(() => "?").join(",")})`);
+      args.push(...types);
+    }
+    args.push(limit);
+    const joinFts = query.trim() ? "JOIN memory_fts f ON f.memory_id = m.memory_id" : "";
+    const orderBy = query.trim() ? "ORDER BY rank" : "ORDER BY m.updated_at DESC";
+    const rows = this.db.prepare(`
+      SELECT m.* FROM memory_items m ${joinFts}
+      WHERE ${clauses.join(" AND ")}
+      ${orderBy}
+      LIMIT ?
+    `).all(...args) as Array<Record<string, unknown>>;
+    return rows.map(mapMemoryItem);
+  }
+
+  getSettings(): HubSettings {
+    const rows = this.db.prepare("SELECT key, value FROM hub_settings").all() as Array<{ key: string; value: string }>;
+    const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+    return {
+      llmProvider: values.llmProvider ?? "deepseek",
+      llmBaseUrl: values.llmBaseUrl ?? process.env.AGENT_HUB_LLM_BASE_URL ?? "https://api.deepseek.com",
+      llmModel: values.llmModel ?? process.env.AGENT_HUB_LLM_MODEL ?? "",
+      llmApiKey: values.llmApiKey ?? process.env.AGENT_HUB_LLM_API_KEY ?? "",
+      embeddingBaseUrl: values.embeddingBaseUrl ?? process.env.AGENT_HUB_EMBEDDING_BASE_URL ?? "",
+      embeddingModel: values.embeddingModel ?? process.env.AGENT_HUB_EMBEDDING_MODEL ?? "",
+      embeddingApiKey: values.embeddingApiKey ?? process.env.AGENT_HUB_EMBEDDING_API_KEY ?? "",
+      profileMemoryEnabled: values.profileMemoryEnabled === "true",
+      backgroundSyncEnabled: values.backgroundSyncEnabled === "true",
+      manualModelEntry: values.manualModelEntry === "true"
+    };
+  }
+
+  updateSettings(input: Partial<HubSettings>): HubSettings {
+    const current = this.getSettings();
+    const next = { ...current, ...input };
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare("INSERT INTO hub_settings(key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at");
+    this.db.transaction(() => {
+      for (const [key, value] of Object.entries(next)) {
+        stmt.run(key, String(value), now);
+      }
+    })();
+    return this.getSettings();
+  }
+
+  putHubSkill(skill: Omit<HubSkill, "createdAt" | "updatedAt" | "status" | "lastUsedAt"> & Partial<Pick<HubSkill, "createdAt" | "updatedAt" | "status" | "lastUsedAt">>): HubSkill {
+    const now = new Date().toISOString();
+    const complete: HubSkill = { ...skill, status: skill.status ?? "active", createdAt: skill.createdAt ?? now, updatedAt: skill.updatedAt ?? now, lastUsedAt: skill.lastUsedAt ?? null };
+    this.db.prepare(`
+      INSERT INTO hub_skills(skill_id, scope, title, slug, project_root, project_hash, path, reuse_rule, status, source_candidate_id, source_session_id, created_at, updated_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(skill_id) DO UPDATE SET
+        title=excluded.title, reuse_rule=excluded.reuse_rule, status=excluded.status,
+        path=excluded.path, updated_at=excluded.updated_at, last_used_at=excluded.last_used_at
+    `).run(
+      complete.skillId,
+      complete.scope,
+      complete.title,
+      complete.slug,
+      complete.projectRoot,
+      complete.projectHash,
+      complete.path,
+      complete.reuseRule,
+      complete.status,
+      complete.sourceCandidateId,
+      complete.sourceSessionId,
+      complete.createdAt,
+      complete.updatedAt,
+      complete.lastUsedAt
+    );
+    return complete;
+  }
+
+  listHubSkills(projectRoot?: string, includeDisabled = false): HubSkill[] {
+    const clauses = includeDisabled ? [] : ["status = 'active'"];
+    const args: unknown[] = [];
+    if (projectRoot) {
+      clauses.push("(scope = 'global' OR project_root = ?)");
+      args.push(projectRoot);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db.prepare(`SELECT * FROM hub_skills ${where} ORDER BY updated_at DESC`).all(...args) as Array<Record<string, unknown>>;
+    return rows.map(mapHubSkill);
+  }
+
+  getHubSkill(skillId: string): HubSkill | null {
+    const row = this.db.prepare("SELECT * FROM hub_skills WHERE skill_id = ?").get(skillId);
+    return row ? mapHubSkill(row as Record<string, unknown>) : null;
+  }
+
+  disableHubSkill(skillId: string): HubSkill | null {
+    this.db.prepare("UPDATE hub_skills SET status = 'disabled', updated_at = ? WHERE skill_id = ?").run(new Date().toISOString(), skillId);
+    return this.getHubSkill(skillId);
+  }
+
+  deleteHubSkill(skillId: string): { deleted: boolean; path: string | null } {
+    const skill = this.getHubSkill(skillId);
+    if (!skill) {
+      return { deleted: false, path: null };
+    }
+    this.db.prepare("DELETE FROM hub_skills WHERE skill_id = ?").run(skillId);
+    return { deleted: true, path: skill.path };
   }
 
   putSkillCandidate(candidate: Omit<SkillCandidate, "createdAt" | "promotedAt" | "status" | "targetPath"> & Partial<Pick<SkillCandidate, "createdAt" | "status" | "targetPath" | "promotedAt">>): SkillCandidate {
@@ -375,13 +563,49 @@ function mapEvent(row: Record<string, unknown>, includeRaw: boolean): StoredEven
   };
 }
 
-function mapEverCoreSync(row: Record<string, unknown>): EverCoreSyncRecord {
+function mapMemorySync(row: Record<string, unknown>): MemorySyncRecord {
   return {
     sessionId: String(row.session_id),
     fileSha256: String(row.file_sha256),
-    status: String(row.status) as EverCoreSyncRecord["status"],
+    status: String(row.status) as MemorySyncRecord["status"],
     syncedAt: row.synced_at ? String(row.synced_at) : null,
     error: row.error ? String(row.error) : null
+  };
+}
+
+function mapMemoryItem(row: Record<string, unknown>): MemoryItem {
+  return {
+    memoryId: String(row.memory_id),
+    type: String(row.type) as MemoryItem["type"],
+    scope: String(row.scope) as MemoryItem["scope"],
+    projectRoot: row.project_root ? String(row.project_root) : null,
+    sessionId: row.session_id ? String(row.session_id) : null,
+    sourceAnchor: row.source_anchor ? String(row.source_anchor) : null,
+    title: String(row.title),
+    summary: String(row.summary),
+    tags: parseJsonArray(row.tags_json),
+    status: String(row.status) as MemoryItem["status"],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapHubSkill(row: Record<string, unknown>): HubSkill {
+  return {
+    skillId: String(row.skill_id),
+    scope: String(row.scope) as HubSkill["scope"],
+    title: String(row.title),
+    slug: String(row.slug),
+    projectRoot: row.project_root ? String(row.project_root) : null,
+    projectHash: row.project_hash ? String(row.project_hash) : null,
+    path: String(row.path),
+    reuseRule: String(row.reuse_rule),
+    status: String(row.status) as HubSkill["status"],
+    sourceCandidateId: row.source_candidate_id ? String(row.source_candidate_id) : null,
+    sourceSessionId: row.source_session_id ? String(row.source_session_id) : null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    lastUsedAt: row.last_used_at ? String(row.last_used_at) : null
   };
 }
 
@@ -402,4 +626,13 @@ function mapSkillCandidate(row: Record<string, unknown>): SkillCandidate {
     createdAt: String(row.created_at),
     promotedAt: row.promoted_at ? String(row.promoted_at) : null
   };
+}
+
+function parseJsonArray(value: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]")) as unknown;
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
 }

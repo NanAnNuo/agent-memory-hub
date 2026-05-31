@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
@@ -8,18 +8,18 @@ import { URL } from "node:url";
 import { ArchiveStore } from "./archive/store.js";
 import { exportSession } from "./archive/export.js";
 import { isReadableConversationEvent } from "./archive/readable.js";
-import { EverCoreClient, syncPendingEverCoreSessions } from "./evercore/client.js";
-import { ensureHubDirectories, getEverCoreConfig, getHubPaths, getPackageRoot } from "./shared/config.js";
+import { ensureHubDirectories, getHubPaths, getPackageRoot } from "./shared/config.js";
 import { OrchestratorStore } from "./orchestrator/store.js";
 import { promoteSkillCandidate } from "./skills/promotion.js";
 import { LiveSyncService } from "./sync/service.js";
+import { buildContextPack, buildMemoryFromSession, searchLocalMemory } from "./memory/local.js";
+import { importModels, publicSettings, testLlm } from "./memory/llm.js";
 
 const paths = getHubPaths();
 ensureHubDirectories(paths);
 const archiveStore = new ArchiveStore(paths);
 const taskStore = new OrchestratorStore(paths);
 const syncService = new LiveSyncService(archiveStore);
-const everCoreClient = new EverCoreClient(getEverCoreConfig());
 
 const host = "127.0.0.1";
 const port = Number(process.env.AGENT_HUB_DASHBOARD_PORT ?? "43121");
@@ -40,12 +40,17 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/status") {
       const manifests = archiveStore.listManifests();
-      const evercore = await everCoreClient.status();
       return json(response, {
         sync: syncService.status,
-        evercore,
-        evercoreSync: archiveStore.listEverCoreSync().slice(0, 50),
+        localMemory: {
+          enabled: true,
+          degraded: !archiveStore.getSettings().embeddingModel,
+          lanceDbDir: paths.lanceDbDir,
+          skillsDir: paths.skillsDir
+        },
+        memorySync: archiveStore.listMemorySync().slice(0, 50),
         skillCandidates: archiveStore.listSkillCandidates("pending").length,
+        hubSkills: archiveStore.listHubSkills(undefined, true).length,
         counts: manifests.reduce<Record<string, number>>((counts, session) => {
           counts[session.client] = (counts[session.client] ?? 0) + 1;
           return counts;
@@ -115,7 +120,37 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/candidates") {
       return json(response, archiveStore.listSkillCandidates(url.searchParams.get("status") ?? undefined));
     }
-    if (request.method === "POST" && url.pathname === "/api/sync") {
+    if (request.method === "GET" && url.pathname === "/api/settings") {
+      return json(response, publicSettings(archiveStore.getSettings()));
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings") {
+      const body = await readJsonBody(request);
+      const current = archiveStore.getSettings();
+      const next = archiveStore.updateSettings({
+        llmProvider: stringField(body, "llmProvider") || current.llmProvider,
+        llmBaseUrl: stringField(body, "llmBaseUrl") || current.llmBaseUrl,
+        llmModel: stringField(body, "llmModel") || current.llmModel,
+        llmApiKey: stringField(body, "llmApiKey") || current.llmApiKey,
+        embeddingBaseUrl: stringField(body, "embeddingBaseUrl") || current.embeddingBaseUrl,
+        embeddingModel: stringField(body, "embeddingModel") || current.embeddingModel,
+        embeddingApiKey: stringField(body, "embeddingApiKey") || current.embeddingApiKey,
+        profileMemoryEnabled: booleanField(body, "profileMemoryEnabled", current.profileMemoryEnabled),
+        backgroundSyncEnabled: booleanField(body, "backgroundSyncEnabled", current.backgroundSyncEnabled),
+        manualModelEntry: booleanField(body, "manualModelEntry", current.manualModelEntry)
+      });
+      return json(response, publicSettings(next));
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings/import-models") {
+      const body = await readJsonBody(request);
+      const settings = archiveStore.getSettings();
+      return json(response, { models: await importModels(stringField(body, "baseUrl") || settings.llmBaseUrl, stringField(body, "apiKey") || settings.llmApiKey) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings/test-llm") {
+      const body = await readJsonBody(request);
+      const settings = { ...archiveStore.getSettings(), ...body };
+      return json(response, await testLlm(settings));
+    }
+    if (request.method === "POST" && (url.pathname === "/api/sync" || url.pathname === "/api/sync/run")) {
       if (request.headers.origin && request.headers.origin !== `http://${host}:${port}`) {
         response.writeHead(403).end("Forbidden");
         return;
@@ -123,18 +158,23 @@ const server = createServer(async (request, response) => {
       await syncService.syncAll("dashboard manual refresh");
       return json(response, syncService.status);
     }
-    if (request.method === "POST" && url.pathname === "/api/evercore/sync") {
-      const body = await readJsonBody(request);
-      return json(response, await syncPendingEverCoreSessions(archiveStore, everCoreClient, numberField(body, "limit", 20)));
-    }
-    if (request.method === "POST" && url.pathname === "/api/memory/search") {
-      const body = await readJsonBody(request);
-      const query = stringField(body, "query");
+    if ((request.method === "POST" || request.method === "GET") && url.pathname === "/api/memory/search") {
+      const body = request.method === "POST" ? await readJsonBody(request) : {};
+      const query = stringField(body, "query") || url.searchParams.get("q") || "";
       if (!query) {
         response.writeHead(400).end("Missing query");
         return;
       }
-      return json(response, await everCoreClient.searchAgentMemory(query, numberField(body, "topK", 8), stringField(body, "method") || "hybrid"));
+      const project = stringField(body, "projectRoot") || url.searchParams.get("project") || undefined;
+      return json(response, searchLocalMemory(archiveStore, query, project, arrayField(body, "types"), numberField(body, "topK", 20)));
+    }
+    if (request.method === "POST" && url.pathname === "/api/memory/build") {
+      const body = await readJsonBody(request);
+      return json(response, await buildMemoryFromSession(archiveStore, requiredString(body, "sessionId")));
+    }
+    if (request.method === "POST" && url.pathname === "/api/context-pack") {
+      const body = await readJsonBody(request);
+      return json(response, buildContextPack(archiveStore, requiredString(body, "sessionId"), numberField(body, "maxMessages", 40)));
     }
     if (request.method === "POST" && url.pathname === "/api/candidates") {
       const body = await readJsonBody(request);
@@ -153,7 +193,29 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/candidates/promote") {
       const body = await readJsonBody(request);
-      return json(response, promoteSkillCandidate(archiveStore, requiredString(body, "candidateId"), Boolean(body.approved)));
+      return json(response, promoteSkillCandidate(archiveStore, paths, requiredString(body, "candidateId"), Boolean(body.approved)));
+    }
+    if (request.method === "GET" && url.pathname === "/api/skills") {
+      return json(response, archiveStore.listHubSkills(url.searchParams.get("project") ?? undefined, url.searchParams.get("includeDisabled") === "true"));
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/api/skills/")) {
+      const skill = archiveStore.getHubSkill(decodeURIComponent(url.pathname.slice("/api/skills/".length)));
+      if (!skill) {
+        response.writeHead(404).end("Not Found");
+        return;
+      }
+      return json(response, { ...skill, content: readFileSync(skill.path, "utf8") });
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/disable") && url.pathname.startsWith("/api/skills/")) {
+      const skillId = decodeURIComponent(url.pathname.slice("/api/skills/".length, -"/disable".length));
+      return json(response, archiveStore.disableHubSkill(skillId));
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/skills/")) {
+      const deleted = archiveStore.deleteHubSkill(decodeURIComponent(url.pathname.slice("/api/skills/".length)));
+      if (deleted.path) {
+        rmSync(deleted.path, { force: true });
+      }
+      return json(response, deleted);
     }
     if (request.method === "POST" && url.pathname === "/api/export") {
       const body = await readJsonBody(request);
@@ -185,11 +247,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   process.stderr.write(`Agent Memory Hub dashboard available at http://${host}:${port}\n`);
-  if (process.env.AGENT_HUB_BACKGROUND_SYNC === "true") {
-    void syncService.start();
-  } else {
-    syncService.status.lastReason = "background sync disabled";
-  }
+  void syncService.start();
 });
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
@@ -236,6 +294,10 @@ function requiredString(body: Record<string, unknown>, key: string): string {
 
 function numberField(body: Record<string, unknown>, key: string, fallback: number): number {
   return typeof body[key] === "number" && Number.isFinite(body[key]) ? Number(body[key]) : fallback;
+}
+
+function booleanField(body: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  return typeof body[key] === "boolean" ? body[key] : fallback;
 }
 
 function numberParam(url: URL, key: string, fallback: number): number {

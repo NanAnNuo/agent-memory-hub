@@ -78,12 +78,57 @@ export interface TaskCheckpoint {
   updatedAt: string;
 }
 
-export interface EverCoreSyncRecord {
+export interface MemorySyncRecord {
   sessionId: string;
   fileSha256: string;
   status: "synced" | "failed";
   syncedAt: string | null;
   error: string | null;
+}
+
+export interface MemoryItem {
+  memoryId: string;
+  type: "case" | "skill_hint" | "profile";
+  scope: "global" | "project";
+  projectRoot: string | null;
+  sessionId: string | null;
+  sourceAnchor: string | null;
+  title: string;
+  summary: string;
+  tags: string[];
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HubSkill {
+  skillId: string;
+  scope: "global" | "project";
+  title: string;
+  slug: string;
+  projectRoot: string | null;
+  projectHash: string | null;
+  path: string;
+  reuseRule: string;
+  status: "active" | "disabled";
+  sourceCandidateId: string | null;
+  sourceSessionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface HubSettings {
+  llmProvider: string;
+  llmBaseUrl: string;
+  llmModel: string;
+  llmApiKey: string;
+  embeddingBaseUrl: string;
+  embeddingModel: string;
+  embeddingApiKey: string;
+  profileMemoryEnabled: boolean;
+  backgroundSyncEnabled: boolean;
+  manualModelEntry: boolean;
 }
 
 export interface SkillCandidate {

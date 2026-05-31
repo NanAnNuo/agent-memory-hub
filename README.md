@@ -1,50 +1,51 @@
 # Agent Memory Hub
 
-Local memory workbench for Codex, Claude Code, and OpenCode. This project is a fork of the original Agent Collaboration Hub and adds:
+Local memory workbench for Codex, Claude, and OpenCode.
 
-- EverCore semantic agent memory sync and search.
-- A local visual dashboard for conversations, memory, skill candidates, and exports.
-- Human-approved skill promotion with strict global/project separation.
-- Desktop shortcut launcher for Hub + EverCore.
+## Features
 
-## Quick Start
+- Unified sidebar for archived agent conversations.
+- Local SQLite archive with FTS search and redacted export.
+- Lightweight local memory items for cases, skill hints, and optional profiles.
+- Hub-managed skill promotion under the Hub data directory only.
+- DeepSeek/OpenAI-compatible settings with model import from `/v1/models`.
+- MCP tools for archive search, local memory, context packs, and Hub skills.
+
+## Launch
+
+Use the desktop entry `Agent Memory Hub.cmd`, or run:
 
 ```powershell
-npm install
-npm run check
-.\scripts\install-desktop-shortcut.ps1
+npm run build
+npm run dashboard
 ```
 
-Then open **Agent Memory Hub** from the Windows desktop.
-On this Windows profile the reliable desktop entry is `Agent Memory Hub.cmd`; it starts the local service and opens the visual dashboard.
+The launcher starts only Agent Memory Hub. Docker and EverCore are not required.
 
-## EverCore
+## Data Locations
 
-Defaults:
+- Archive database: `C:\Users\22289\.memory-hub\archive.db`
+- Local vector directory: `C:\Users\22289\.memory-hub\lancedb`
+- Hub skills: `C:\Users\22289\.memory-hub\skills`
+- Exports: `C:\Users\22289\.memory-hub\exports`
 
-- `AGENT_HUB_EVERCORE_ROOT=D:\桌面\工作文件夹\项目\日常通用任务处理\EverOS\methods\EverCore`
-- `AGENT_HUB_EVERCORE_URL=http://127.0.0.1:1995`
-- `AGENT_HUB_EVERCORE_USER_ID=agent-hub-local`
+Approved skills are never written to Codex, Claude, OpenCode, or business project skill directories. Agents should load them through the Hub MCP tools.
 
-The launcher starts Docker Compose in the EverCore root and starts the EverCore API when the port is not already listening. It does not create or manage `.env`; copy EverCore `env.template` to `.env` and fill the required LLM/vector keys first.
+## Settings
+
+The Settings page supports DeepSeek/OpenAI-compatible providers:
+
+- `base_url`
+- API key
+- model imported from `GET /v1/models`
+- optional embedding endpoint/model
+- optional profile memory
+- optional background sync flag
+
+API keys are masked in API responses and must not be exported, logged, or written into generated skills.
 
 ## Skill Rules
 
-- Global skills are written to both `C:\Users\22289\.codex\skills\learned-<slug>\SKILL.md` and `C:\Users\22289\AppData\Local\Claude-3p\skills\learned-<slug>\SKILL.md`.
-- Project skills are written to `<project>\.project-skills\<slug>\SKILL.md`.
-- Project skills are not included by `-PublishPortableSkills`.
-- Every skill promotion requires explicit `approved=true`.
-
-## Dashboard Features
-
-- Conversation search across Codex, Claude, and OpenCode archives.
-- Session detail view with redacted source anchors.
-- EverCore `agent_memory` search for cases and skills.
-- Skill candidate review and approval.
-- Redacted Markdown and JSON session export.
-
-## Checks
-
-```powershell
-npm run check
-```
+- Global skills: `C:\Users\22289\.memory-hub\skills\global\<slug>\SKILL.md`
+- Project skills: `C:\Users\22289\.memory-hub\skills\projects\<project-hash>\<slug>\SKILL.md`
+- Project scope is enforced by metadata and MCP filtering, not by writing into the project folder.

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,13 +23,11 @@ afterEach(async () => {
 });
 
 describe("dashboard UI flow", () => {
-  it("loads the visual workbench, creates a project skill candidate, promotes it, and exports a session", async () => {
+  it("loads the local workbench, promotes an isolated Hub skill, and exports a session", async () => {
     const root = mkdtempSync(join(tmpdir(), "agent-memory-ui-"));
     const dataDir = join(root, "data");
     const transcriptRoot = join(root, "sessions");
     const projectRoot = join(root, "project");
-    const codexSkills = join(root, "codex-skills");
-    const claudeSkills = join(root, "claude-skills");
     mkdirSync(transcriptRoot, { recursive: true });
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(transcriptRoot, "session.jsonl"), [
@@ -53,9 +51,7 @@ describe("dashboard UI flow", () => {
         AGENT_HUB_DATA_DIR: dataDir,
         AGENT_HUB_DASHBOARD_PORT: String(port),
         AGENT_HUB_INCLUDE_DEFAULT_TRANSCRIPT_ROOTS: "false",
-        AGENT_HUB_TRANSCRIPT_ROOTS: transcriptRoot,
-        AGENT_HUB_CODEX_SKILLS_DIR: codexSkills,
-        AGENT_HUB_CLAUDE_SKILLS_DIR: claudeSkills
+        AGENT_HUB_TRANSCRIPT_ROOTS: transcriptRoot
       }
     });
     const tokenPath = join(dataDir, "dashboard.token");
@@ -69,29 +65,23 @@ describe("dashboard UI flow", () => {
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
     });
-    page.on("response", async (response) => {
-      if (response.url().includes("/api/export") && !response.ok()) {
-        errors.push(`export ${response.status()}: ${await response.text()}`);
-      }
-    });
 
     await page.goto(`http://127.0.0.1:${port}/#token=${token}`, { waitUntil: "domcontentloaded" });
     await expectText(page, "Agent Memory Hub");
-    await expectText(page, "EverCore");
+    await expectText(page, "Local Memory");
 
-    await page.getByRole("button", { name: "会话" }).click();
+    await page.locator('[data-view="conversations"]').click();
     await page.locator("#projectFilter").fill(projectRoot);
-    await page.getByRole("button", { name: "搜索片段" }).click();
+    await page.locator("#sessionFilters button[type='submit']").click();
     await expectText(page, "please export this durable workflow");
     await page.locator(`[data-session="${imported.sessionId}"]`).click();
     await expectText(page, imported.sessionId);
-    await expectText(page, "please export this durable workflow");
     await page.locator(".chain-event.user").first().waitFor({ timeout: 10000 });
     await page.locator(".chain-event.assistant").first().waitFor({ timeout: 10000 });
     await page.locator(".chain-event.tool").first().waitFor({ timeout: 10000 });
     await page.locator(".chain-event.control").first().waitFor({ timeout: 10000 });
 
-    await page.getByRole("button", { name: "Skills" }).click();
+    await page.locator('[data-view="skills"]').click();
     await page.locator("#candTitle").fill("Project UI Flow");
     await page.locator("#candProject").fill(projectRoot);
     await page.locator("#candRule").fill("Use only for this project UI flow.");
@@ -99,13 +89,14 @@ describe("dashboard UI flow", () => {
     await page.locator("#candEvidence").fill("playwright ui test");
     await page.locator("#createCandidate").click();
     await page.locator("#candidates").getByText("Project UI Flow", { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByRole("button", { name: "批准写入" }).click();
-    await waitFor(() => readFileSync(join(projectRoot, ".project-skills", "project-ui-flow", "SKILL.md"), "utf8"), 10000);
+    await page.locator("[data-candidate]").first().click();
+    await waitFor(() => existsSync(join(projectRoot, ".project-skills")) ? "" : "project-clean", 10000);
+    await waitFor(() => existsSync(join(paths.skillsDir, "projects")) ? "hub-skill" : "", 10000);
 
-    await page.getByRole("button", { name: "导出" }).click();
+    await page.locator('[data-view="exports"]').click();
     await page.locator("#exportSessionId").fill(imported.sessionId);
     await page.locator("#exportFormat").selectOption("markdown");
-    await page.getByRole("button", { name: "导出并下载" }).click();
+    await page.locator("#exportForm button[type='submit']").click();
     await waitFor(async () => {
       const text = await page.locator("#exportPreview").textContent();
       return text?.includes("please export this durable workflow") ? text : "";

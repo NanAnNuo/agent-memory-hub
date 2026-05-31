@@ -15,17 +15,12 @@ export interface HubPaths {
   dataDir: string;
   archiveDatabase: string;
   orchestratorDatabase: string;
+  lanceDbDir: string;
+  skillsDir: string;
   worktreesDir: string;
   taskLogsDir: string;
   exportsDir: string;
   auditLog: string;
-}
-
-export interface EverCoreConfig {
-  enabled: boolean;
-  url: string;
-  root: string;
-  userId: string;
 }
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -39,6 +34,8 @@ export function getHubPaths(dataDir = process.env.AGENT_HUB_DATA_DIR ?? join(hom
     dataDir,
     archiveDatabase: join(dataDir, "archive.db"),
     orchestratorDatabase: join(dataDir, "orchestrator.db"),
+    lanceDbDir: process.env.AGENT_HUB_LANCEDB_DIR ?? join(dataDir, "lancedb"),
+    skillsDir: process.env.AGENT_HUB_SKILLS_DIR ?? join(dataDir, "skills"),
     worktreesDir: join(dataDir, "worktrees"),
     taskLogsDir: join(dataDir, "task-logs"),
     exportsDir: join(dataDir, "exports"),
@@ -47,18 +44,9 @@ export function getHubPaths(dataDir = process.env.AGENT_HUB_DATA_DIR ?? join(hom
 }
 
 export function ensureHubDirectories(paths: HubPaths): void {
-  for (const path of [paths.dataDir, paths.worktreesDir, paths.taskLogsDir, paths.exportsDir]) {
+  for (const path of [paths.dataDir, paths.lanceDbDir, paths.skillsDir, paths.worktreesDir, paths.taskLogsDir, paths.exportsDir]) {
     mkdirSync(path, { recursive: true });
   }
-}
-
-export function getEverCoreConfig(): EverCoreConfig {
-  return {
-    enabled: process.env.AGENT_HUB_EVERCORE_ENABLED === "true",
-    url: normalizeUrl(process.env.AGENT_HUB_EVERCORE_URL ?? "http://127.0.0.1:1995"),
-    root: resolve(process.env.AGENT_HUB_EVERCORE_ROOT ?? "D:\\桌面\\工作文件夹\\项目\\日常通用任务处理\\EverOS\\methods\\EverCore"),
-    userId: process.env.AGENT_HUB_EVERCORE_USER_ID ?? "agent-hub-local"
-  };
 }
 
 export function loadModelProfiles(path = process.env.AGENT_HUB_MODEL_PROFILES ?? join(packageRoot, "config", "model-profiles.json")): Record<string, ModelProfile> {
@@ -95,6 +83,6 @@ export function getAllowedOpenCodeDatabases(): string[] {
   return [...defaults, ...configured].map((path) => resolve(path));
 }
 
-function normalizeUrl(value: string): string {
+export function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }

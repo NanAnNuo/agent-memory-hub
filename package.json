@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local multi-agent orchestration, EverCore memory integration, conversation export, and skill capture.",
+  "description": "Local multi-agent archive, lightweight memory, isolated skills, and conversation export.",
   "bin": {
     "agent-archive-mcp": "./dist/archive-main.js",
     "agent-orchestrator-mcp": "./dist/orchestrator-main.js",

@@ -1,11 +1,10 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots, getEverCoreConfig } from "../shared/config.js";
+import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots } from "../shared/config.js";
 import { findJsonlFilesAsync, importJsonlFile, importOpenCodeDatabase } from "../archive/importers.js";
 import { ArchiveStore } from "../archive/store.js";
 import type { ClientKind } from "../archive/types.js";
-import { EverCoreClient, syncPendingEverCoreSessions } from "../evercore/client.js";
 
 export interface SyncStatus {
   startedAt: string;
@@ -14,7 +13,7 @@ export interface SyncStatus {
   running: boolean;
   insertedEvents: Record<ClientKind, number>;
   errors: string[];
-  evercore: { enabled: boolean; lastSyncAt: string | null; lastResult: string | null };
+  memory: { enabled: boolean; lastSyncAt: string | null; lastResult: string | null };
 }
 
 export class LiveSyncService {
@@ -30,9 +29,8 @@ export class LiveSyncService {
     lastReason: null,
     running: false,
     insertedEvents: { codex: 0, claude: 0, opencode: 0 },
-    errors: []
-    ,
-    evercore: { enabled: getEverCoreConfig().enabled, lastSyncAt: null, lastResult: null }
+    errors: [],
+    memory: { enabled: true, lastSyncAt: null, lastResult: null }
   };
 
   constructor(store: ArchiveStore) {
@@ -46,11 +44,7 @@ export class LiveSyncService {
   }
 
   async start(): Promise<void> {
-    if (process.env.AGENT_HUB_STARTUP_SYNC === "true") {
-      await this.syncAll("startup");
-    } else {
-      this.status.lastReason = "startup sync disabled";
-    }
+    void this.syncAll("startup");
     if (process.env.AGENT_HUB_LIVE_WATCH === "true") {
       for (const source of this.roots) {
         if (!existsSync(source.path)) {
@@ -131,7 +125,7 @@ export class LiveSyncService {
         }
       }
       this.ingestOpenCodeDatabases();
-      await this.syncEverCoreIfEnabled();
+      this.syncLocalMemoryState();
       this.status.lastSyncAt = new Date().toISOString();
       this.status.lastReason = reason;
     } catch (error) {
@@ -145,7 +139,7 @@ export class LiveSyncService {
     this.status.running = true;
     try {
       this.ingestOpenCodeDatabases();
-      await this.syncEverCoreIfEnabled();
+      this.syncLocalMemoryState();
       this.status.lastSyncAt = new Date().toISOString();
       this.status.lastReason = reason;
     } catch (error) {
@@ -167,20 +161,10 @@ export class LiveSyncService {
     }
   }
 
-  private async syncEverCoreIfEnabled(): Promise<void> {
-    const config = getEverCoreConfig();
-    this.status.evercore.enabled = config.enabled;
-    if (!config.enabled) {
-      return;
-    }
-    if (process.env.AGENT_HUB_EVERCORE_AUTO_SYNC !== "true") {
-      this.status.evercore.lastResult = "auto sync disabled";
-      return;
-    }
-    const limit = Number(process.env.AGENT_HUB_EVERCORE_SYNC_LIMIT ?? "2");
-    const result = await syncPendingEverCoreSessions(this.store, new EverCoreClient(config), limit);
-    this.status.evercore.lastSyncAt = new Date().toISOString();
-    this.status.evercore.lastResult = `${result.synced} synced, ${result.failed} failed, ${result.messages} messages`;
+  private syncLocalMemoryState(): void {
+    this.status.memory.enabled = true;
+    this.status.memory.lastSyncAt = new Date().toISOString();
+    this.status.memory.lastResult = "archive sync complete; semantic memory is built on demand";
   }
 
   private addError(error: unknown): void {

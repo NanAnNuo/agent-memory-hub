@@ -1,14 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots, getHubPaths, ensureHubDirectories, loadModelProfiles, getEverCoreConfig } from "../shared/config.js";
+import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots, getHubPaths, ensureHubDirectories, loadModelProfiles } from "../shared/config.js";
 import { buildContextBundle } from "./context.js";
 import { exportSession } from "./export.js";
 import { findJsonlFiles, importJsonlFile, importOpenCodeDatabase } from "./importers.js";
 import { ArchiveStore } from "./store.js";
 import type { ClientKind, SourceRange } from "./types.js";
-import { EverCoreClient, syncPendingEverCoreSessions } from "../evercore/client.js";
+import { buildContextPack, buildMemoryFromSession, searchLocalMemory } from "../memory/local.js";
 import { promoteSkillCandidate } from "../skills/promotion.js";
 
 const clientSchema = z.enum(["codex", "claude", "opencode"]);
@@ -18,7 +18,6 @@ export function createArchiveServer(dataDir?: string): McpServer {
   ensureHubDirectories(paths);
   const store = new ArchiveStore(paths);
   const profiles = loadModelProfiles();
-  const everCoreClient = new EverCoreClient(getEverCoreConfig());
   const server = new McpServer({ name: "agent-archive-mcp-server", version: "0.1.0" });
 
   server.registerTool("archive_ingest_jsonl", {
@@ -182,30 +181,44 @@ export function createArchiveServer(dataDir?: string): McpServer {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ task_id }) => toolResult(store.getCheckpoint(task_id)));
 
-  server.registerTool("evercore_status", {
-    title: "Get EverCore Status",
-    description: "Check the configured EverCore endpoint used for semantic agent memory.",
+  server.registerTool("hub_status", {
+    title: "Get Hub Status",
+    description: "Return local archive, memory, and skill counts.",
     inputSchema: {},
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, async () => toolResult(await everCoreClient.status()));
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async () => toolResult({
+    sessions: store.listManifests().length,
+    skills: store.listHubSkills(undefined, true).length,
+    memorySync: store.listMemorySync().slice(0, 20),
+    skillsDir: paths.skillsDir,
+    lanceDbDir: paths.lanceDbDir
+  }));
 
-  server.registerTool("evercore_sync_pending_sessions", {
-    title: "Sync Archived Sessions To EverCore",
-    description: "Incrementally send unsynced archived sessions to EverCore agent memory. Uses session_id plus file_sha256 for idempotence.",
-    inputSchema: { limit: z.number().int().min(1).max(100).default(20) },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, async ({ limit }) => toolResult(await syncPendingEverCoreSessions(store, everCoreClient, limit)));
-
-  server.registerTool("evercore_search_agent_memory", {
-    title: "Search EverCore Agent Memory",
-    description: "Search EverCore agent_memory and return agent cases and reusable skills.",
+  server.registerTool("memory_search", {
+    title: "Search Local Agent Memory",
+    description: "Search local memory cases, skill hints, and optional profile entries.",
     inputSchema: {
       query: z.string().min(1).max(1000),
-      top_k: z.number().int().min(1).max(50).default(8),
-      method: z.enum(["keyword", "vector", "hybrid", "rrf", "agentic"]).default("hybrid")
+      project_root: z.string().optional(),
+      types: z.array(z.enum(["case", "skill_hint", "profile"])).default([]),
+      top_k: z.number().int().min(1).max(50).default(8)
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
-  }, async ({ query, top_k, method }) => toolResult(await everCoreClient.searchAgentMemory(query, top_k, method)));
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ query, project_root, types, top_k }) => toolResult(searchLocalMemory(store, query, project_root, types, top_k)));
+
+  server.registerTool("memory_build_from_session", {
+    title: "Build Memory From Session",
+    description: "Create a local memory item from a previously archived session.",
+    inputSchema: { session_id: z.string().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  }, async ({ session_id }) => toolResult(await buildMemoryFromSession(store, session_id)));
+
+  server.registerTool("memory_get_context_pack", {
+    title: "Build Restore Context Pack",
+    description: "Generate a readable context pack for continuing a prior archived session.",
+    inputSchema: { session_id: z.string().min(1), max_messages: z.number().int().min(1).max(200).default(40) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ session_id, max_messages }) => toolResult(buildContextPack(store, session_id, max_messages)));
 
   server.registerTool("skill_candidate_create", {
     title: "Create Reviewable Skill Candidate",
@@ -245,10 +258,42 @@ export function createArchiveServer(dataDir?: string): McpServer {
 
   server.registerTool("skill_candidate_promote", {
     title: "Promote Approved Skill Candidate",
-    description: "Write an approved candidate to both Codex and Claude global skill directories or to the project .project-skills directory.",
+    description: "Write an approved candidate to the Hub-managed skill directory only.",
     inputSchema: { candidate_id: z.string().min(1), approved: z.literal(true) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
-  }, async ({ candidate_id, approved }) => toolResult(promoteSkillCandidate(store, candidate_id, approved)));
+  }, async ({ candidate_id, approved }) => toolResult(promoteSkillCandidate(store, paths, candidate_id, approved)));
+
+  server.registerTool("hub_skill_list", {
+    title: "List Hub Skills",
+    description: "List Hub-managed skills without reading Codex/Claude native skill directories.",
+    inputSchema: { project_root: z.string().optional(), include_disabled: z.boolean().default(false) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ project_root, include_disabled }) => toolResult(store.listHubSkills(project_root, include_disabled)));
+
+  server.registerTool("hub_skill_search", {
+    title: "Search Hub Skills",
+    description: "Search Hub-managed skills by query and optional project root.",
+    inputSchema: { query: z.string().min(1), project_root: z.string().optional(), limit: z.number().int().min(1).max(50).default(10) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ query, project_root, limit }) => {
+    const lowered = query.toLowerCase();
+    return toolResult(store.listHubSkills(project_root).filter((skill) =>
+      `${skill.title}\n${skill.reuseRule}`.toLowerCase().includes(lowered)
+    ).slice(0, limit));
+  });
+
+  server.registerTool("hub_skill_get", {
+    title: "Read Hub Skill",
+    description: "Read one Hub-managed SKILL.md file by skill id.",
+    inputSchema: { skill_id: z.string().min(1) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ skill_id }) => {
+    const skill = store.getHubSkill(skill_id);
+    if (!skill) {
+      throw new Error(`Unknown Hub skill: ${skill_id}`);
+    }
+    return toolResult({ ...skill, content: readFileSync(skill.path, "utf8") });
+  });
 
   server.registerTool("archive_export_session", {
     title: "Export Archived Session",
