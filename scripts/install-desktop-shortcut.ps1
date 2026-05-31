@@ -35,7 +35,7 @@ $cmdLines = @(
     '@echo off',
     'setlocal',
     ('cd /d "{0}"' -f $junction),
-    ('"{0}\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "{1}" -HubRoot "{2}"' -f $env:SystemRoot, $launcherForShortcut, $junction)
+    ('"{0}\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "{1}" -HubRoot "{2}"' -f $env:SystemRoot, $launcherForShortcut, $junction)
 )
 Set-Content -LiteralPath $cmdPath -Value $cmdLines -Encoding ASCII
 

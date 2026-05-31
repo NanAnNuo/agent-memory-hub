@@ -78,7 +78,7 @@ describe("dashboard UI flow", () => {
 
     await page.getByRole("button", { name: "会话" }).click();
     await expectText(page, "ui-session");
-    await page.locator("[data-session]").first().click();
+    await page.locator(`[data-session="${imported.sessionId}"]`).click();
     await expectText(page, "please export this durable workflow");
 
     await page.getByRole("button", { name: "Skills" }).click();

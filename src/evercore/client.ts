@@ -1,5 +1,6 @@
 import type { ArchiveStore } from "../archive/store.js";
 import type { SessionManifest, StoredEvent } from "../archive/types.js";
+import { readableConversationEvents } from "../archive/readable.js";
 import type { EverCoreConfig } from "../shared/config.js";
 
 export interface EverCoreStatus {
@@ -133,7 +134,7 @@ export async function syncPendingEverCoreSessions(store: ArchiveStore, client: E
 }
 
 function toAgentMessages(manifest: SessionManifest, events: StoredEvent[]): AgentMessage[] {
-  return events
+  return readableConversationEvents(events)
     .filter((event) => event.searchableText.trim())
     .map((event, index) => ({
       message_id: `${manifest.sessionId}_${String(event.lineNumber).padStart(6, "0")}_${index}`,

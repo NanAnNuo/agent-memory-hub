@@ -7,6 +7,7 @@ import { extname, join } from "node:path";
 import { URL } from "node:url";
 import { ArchiveStore } from "./archive/store.js";
 import { exportSession } from "./archive/export.js";
+import { isReadableConversationEvent, readableConversationEvents } from "./archive/readable.js";
 import { EverCoreClient, syncPendingEverCoreSessions } from "./evercore/client.js";
 import { ensureHubDirectories, getEverCoreConfig, getHubPaths, getPackageRoot } from "./shared/config.js";
 import { OrchestratorStore } from "./orchestrator/store.js";
@@ -70,14 +71,15 @@ const server = createServer(async (request, response) => {
         response.writeHead(404).end("Not Found");
         return;
       }
-      return json(response, { manifest, messages: archiveStore.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1)) });
+      const events = archiveStore.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1));
+      return json(response, { manifest, messages: readableConversationEvents(events) });
     }
     if (request.method === "GET" && url.pathname === "/api/search") {
       const query = (url.searchParams.get("q") ?? "").trim();
       if (!query) {
         return json(response, []);
       }
-      return json(response, archiveStore.searchMessages(query, undefined, 30, 0).map((event) => ({
+      return json(response, archiveStore.searchMessages(query, undefined, 60, 0).filter(isReadableConversationEvent).slice(0, 30).map((event) => ({
         client: event.client,
         sessionId: event.sessionId,
         lineNumber: event.lineNumber,
@@ -168,7 +170,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  process.stderr.write(`Agent Collaboration Hub dashboard available at http://${host}:${port}\n`);
+  process.stderr.write(`Agent Memory Hub dashboard available at http://${host}:${port}\n`);
 });
 
 function json(response: ServerResponse, value: unknown, status = 200): void {

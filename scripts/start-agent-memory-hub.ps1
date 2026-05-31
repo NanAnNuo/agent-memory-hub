@@ -32,7 +32,7 @@ try {
 
     $env:AGENT_HUB_EVERCORE_ENABLED = 'false'
     if (-not $SkipEverCore) {
-        if (-not (Test-Path -LiteralPath $EverCoreRoot)) {
+        if ([string]::IsNullOrWhiteSpace($EverCoreRoot) -or -not (Test-Path -LiteralPath $EverCoreRoot)) {
             Write-Warning "EverCore root not found. Dashboard will open without EverCore sync."
         } else {
             $env:AGENT_HUB_EVERCORE_ROOT = $EverCoreRoot

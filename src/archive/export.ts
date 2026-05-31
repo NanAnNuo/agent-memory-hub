@@ -3,6 +3,7 @@ import { extname, join } from "node:path";
 import type { ArchiveStore } from "./store.js";
 import type { SessionManifest, StoredEvent } from "./types.js";
 import type { HubPaths } from "../shared/config.js";
+import { readableConversationEvents } from "./readable.js";
 
 export type ExportFormat = "json" | "markdown";
 
@@ -18,7 +19,7 @@ export function exportSession(store: ArchiveStore, paths: HubPaths, sessionId: s
   if (!manifest) {
     throw new Error(`Unknown session: ${sessionId}`);
   }
-  const events = store.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1));
+  const events = readableConversationEvents(store.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1)));
   const filename = `${safeName(manifest.client)}-${safeName(manifest.sourceSessionId ?? manifest.sessionId)}.${format === "json" ? "json" : "md"}`;
   const content = format === "json"
     ? JSON.stringify(toJsonExport(manifest, events), null, 2)
@@ -40,6 +41,7 @@ function toJsonExport(manifest: SessionManifest, events: StoredEvent[]) {
     exportedAt: new Date().toISOString(),
     redacted: true,
     manifest,
+    readableEvents: events.length,
     events: events.map((event) => ({
       sourceAnchor: `${event.client}:${event.sessionId}#${event.lineNumber}`,
       lineNumber: event.lineNumber,
@@ -60,6 +62,7 @@ function toMarkdownExport(manifest: SessionManifest, events: StoredEvent[]): str
     `- Source session: ${manifest.sourceSessionId ?? "n/a"}`,
     `- Project: ${manifest.project ?? "n/a"}`,
     `- Events: ${manifest.eventCount}`,
+    `- Readable conversation messages: ${events.length}`,
     `- First timestamp: ${manifest.firstTimestamp ?? "n/a"}`,
     `- Last timestamp: ${manifest.lastTimestamp ?? "n/a"}`,
     "- Redacted: true",

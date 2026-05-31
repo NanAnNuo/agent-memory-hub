@@ -32,7 +32,9 @@ describe("EverCore sync, export, and skill promotion", () => {
     const { sourceRoot, store } = setupStore();
     const source = join(sourceRoot, "session.jsonl");
     writeFileSync(source, [
+      JSON.stringify({ type: "system", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", content: "internal startup rule" }),
       JSON.stringify({ type: "user", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", message: { role: "user", content: "remember this workflow" } }),
+      JSON.stringify({ type: "assistant", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", message: { role: "assistant", content: "[call shell_command]" } }),
       JSON.stringify({ type: "assistant", sessionId: "s-1", timestamp: "2026-05-25T00:00:01Z", message: { role: "assistant", content: "done" } })
     ].join("\n"), "utf8");
     const imported = importJsonlFile("codex", source, sourceRoot);
@@ -49,6 +51,10 @@ describe("EverCore sync, export, and skill promotion", () => {
     expect(await syncPendingEverCoreSessions(store, client, 10)).toMatchObject({ attempted: 0, synced: 0, failed: 0, messages: 0 });
     expect(calls.map((call) => call.path)).toEqual(["/api/v1/memories/agent", "/api/v1/memories/agent/flush"]);
     expect(calls[0].body).toMatchObject({ user_id: "u-1", session_id: imported.sessionId });
+    expect(calls[0].body.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "remember this workflow" }),
+      expect.objectContaining({ role: "assistant", content: "done" })
+    ]);
     store.close();
   });
 
@@ -69,6 +75,31 @@ describe("EverCore sync, export, and skill promotion", () => {
     expect(jsonExport.content).toContain("[REDACTED]");
     expect(markdown.content).not.toContain("secretabcdefghijk");
     expect(jsonExport.content).not.toContain("secretabcdefghijk");
+    store.close();
+  });
+
+  it("exports only readable user and assistant conversation messages", () => {
+    const { sourceRoot, paths, store } = setupStore();
+    const source = join(sourceRoot, "readable.jsonl");
+    writeFileSync(source, [
+      JSON.stringify({ type: "developer", sessionId: "s-3", content: "internal implementation rule" }),
+      JSON.stringify({ type: "user", sessionId: "s-3", message: { role: "user", content: "please explain the fix" } }),
+      JSON.stringify({ type: "assistant", sessionId: "s-3", message: { role: "assistant", content: "[tool call details]" } }),
+      JSON.stringify({ type: "assistant", sessionId: "s-3", message: { role: "assistant", content: "the fix is ready" } })
+    ].join("\n"), "utf8");
+    const imported = importJsonlFile("codex", source, sourceRoot);
+    store.ingestSession(imported);
+
+    const markdown = exportSession(store, paths, imported.sessionId, "markdown");
+    const jsonExport = exportSession(store, paths, imported.sessionId, "json");
+    const parsed = JSON.parse(jsonExport.content) as { readableEvents: number; events: Array<{ role: string; text: string }> };
+
+    expect(markdown.content).toContain("please explain the fix");
+    expect(markdown.content).toContain("the fix is ready");
+    expect(markdown.content).not.toContain("internal implementation rule");
+    expect(markdown.content).not.toContain("[tool call details]");
+    expect(parsed.readableEvents).toBe(2);
+    expect(parsed.events.map((event) => event.role)).toEqual(["user", "assistant"]);
     store.close();
   });
 
