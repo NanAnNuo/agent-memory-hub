@@ -11,6 +11,7 @@ if (hashToken) {
 }
 const dashboardToken = sessionStorage.getItem("agentMemoryHubToken");
 let latestSessions = [];
+let selectedSessionId = "";
 
 async function api(path, options = {}) {
   if (!dashboardToken) throw new Error("请通过桌面入口或启动脚本打开 Agent Memory Hub");
@@ -76,27 +77,132 @@ async function loadSessions() {
 
 function renderSessions(sessions) {
   $("sessionCount").textContent = `${sessions.length} 条`;
-  $("sessions").innerHTML = sessions.map((session) => `
-    <button class="session-row" data-session="${escapeHtml(session.sessionId)}">
-      <span>${badge(session.client)}${escapeHtml(time(session.lastTimestamp))}</span>
-      <strong>${escapeHtml(session.sourceSessionId || session.sessionId)}</strong>
-      <small>${escapeHtml(session.project || "no project")} / ${session.eventCount} events</small>
-    </button>`).join("") || `<div class="empty">暂无会话</div>`;
+  $("sessions").innerHTML = sessions.length ? renderProjectTree(sessions) : `<div class="empty">暂无会话</div>`;
   document.querySelectorAll("[data-session]").forEach((button) => {
     button.addEventListener("click", () => showSession(button.dataset.session));
   });
 }
 
+function renderProjectTree(sessions) {
+  const projects = groupByProject(sessions);
+  return projects.map((project, index) => `
+    <details class="project-node" ${index < 6 ? "open" : ""}>
+      <summary>
+        <span class="tree-check"></span>
+        <span class="tree-caret">›</span>
+        <span class="folder-icon">□</span>
+        <span class="tree-title"><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.path)}</small></span>
+        <span class="count-pill">${project.sessions.length}</span>
+      </summary>
+      <div class="thread-list">
+        ${project.threads.map((thread) => renderThread(thread)).join("")}
+      </div>
+    </details>
+  `).join("");
+}
+
+function renderThread(thread) {
+  const session = thread.sessions[0];
+  if (thread.sessions.length === 1) {
+    return renderSessionLeaf(session, "main");
+  }
+  return `
+    <details class="thread-node" open>
+      <summary>
+        <span class="tree-caret">›</span>
+        <span class="thread-icon">#</span>
+        <span class="tree-title"><strong>${escapeHtml(thread.name)}</strong><small>${thread.sessions.length} 子线程</small></span>
+      </summary>
+      <div class="child-list">
+        ${thread.sessions.map((child) => renderSessionLeaf(child, "child")).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function renderSessionLeaf(session, kind) {
+  const active = selectedSessionId === session.sessionId ? " active" : "";
+  return `
+    <button class="session-row ${kind}${active}" data-session="${escapeHtml(session.sessionId)}">
+      <span>${badge(session.client)}${escapeHtml(time(session.lastTimestamp))}</span>
+      <strong>${escapeHtml(session.sourceSessionId || session.sessionId)}</strong>
+      <small>${escapeHtml(session.sessionId)} / ${session.eventCount} events</small>
+    </button>`;
+}
+
+function groupByProject(sessions) {
+  const map = new Map();
+  for (const session of sessions) {
+    const path = session.project || "no project";
+    const key = path.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, { name: projectName(path), path, sessions: [], threadMap: new Map(), threads: [] });
+    }
+    const project = map.get(key);
+    project.sessions.push(session);
+    const threadKey = session.sourceSessionId || session.sessionId;
+    if (!project.threadMap.has(threadKey)) {
+      project.threadMap.set(threadKey, { name: threadKey, sessions: [] });
+    }
+    project.threadMap.get(threadKey).sessions.push(session);
+  }
+  return [...map.values()].map((project) => ({
+    ...project,
+    threads: [...project.threadMap.values()].sort((a, b) => newestTimestamp(b.sessions).localeCompare(newestTimestamp(a.sessions)))
+  })).sort((a, b) => b.sessions.length - a.sessions.length || a.name.localeCompare(b.name));
+}
+
+function projectName(path) {
+  if (path === "no project") return path;
+  return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+}
+
+function newestTimestamp(sessions) {
+  return sessions.map((session) => session.lastTimestamp || "").sort().at(-1) || "";
+}
+
 async function showSession(sessionId) {
+  selectedSessionId = sessionId;
   const data = await api(`/api/session?id=${encodeURIComponent(sessionId)}`);
   $("exportSessionId").value = sessionId;
-  $("resultCount").textContent = `${data.messages.length} 条消息`;
-  $("details").classList.remove("empty");
-  $("details").innerHTML = data.messages.map((msg) => item(
-    msg.role || msg.eventType,
-    `${escapeHtml(time(msg.timestamp))} / ${escapeHtml(msg.client)}#${msg.lineNumber}`,
-    msg.searchableText || "(无文本)"
-  )).join("");
+  $("resultCount").textContent = `${data.messages.length} 条事件`;
+  $("details").className = "callchain tall";
+  $("details").innerHTML = data.messages.map(renderEvent).join("") || `<div class="empty">无内容</div>`;
+  renderSessions(latestSessions);
+}
+
+function renderEvent(event) {
+  const kind = eventKind(event);
+  const title = kind === "assistant" ? "Agent" : kind === "user" ? "User" : event.role || event.eventType || "event";
+  const text = event.searchableText || "(无文本)";
+  return `
+    <article class="chain-event ${kind}">
+      <div class="chain-rail"><span></span></div>
+      <div class="chain-card">
+        <header>
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(time(event.timestamp))} / ${escapeHtml(event.client)}#${event.lineNumber}</small>
+        </header>
+        <pre>${escapeHtml(text)}</pre>
+      </div>
+    </article>`;
+}
+
+function eventKind(event) {
+  const role = String(event.role || "").toLowerCase();
+  const type = String(event.eventType || "").toLowerCase();
+  const text = String(event.searchableText || "").trim().toLowerCase();
+  if (role === "user") return "user";
+  if (role === "assistant") {
+    return looksLikeToolText(text) ? "tool" : "assistant";
+  }
+  if (role === "tool" || type.includes("tool") || looksLikeToolText(text)) return "tool";
+  if (role === "system" || role === "developer" || type === "system" || type === "developer") return "control";
+  return "event";
+}
+
+function looksLikeToolText(text) {
+  return text.startsWith("[call") || text.startsWith("[tool") || text.startsWith("tool_call") || text.startsWith("function_call") || text.startsWith("<tool") || text.startsWith("{\"cmd\"") || text.startsWith("{\"tool\"");
 }
 
 function renderCandidates(candidates) {
@@ -132,8 +238,15 @@ $("sessionFilters").addEventListener("submit", async (event) => {
   }
   const results = await api(`/api/search?q=${encodeURIComponent(query)}`);
   $("resultCount").textContent = `${results.length} 条命中`;
-  $("details").classList.remove("empty");
-  $("details").innerHTML = results.map((result) => item(result.role || "match", `${badge(result.client)}${escapeHtml(time(result.timestamp))} / #${result.lineNumber}`, result.text || "(无文本)")).join("") || `<div class="empty">没有匹配内容</div>`;
+  $("details").className = "callchain tall";
+  $("details").innerHTML = results.map((result) => `
+    <article class="chain-event ${escapeHtml(eventKind(result))}">
+      <div class="chain-rail"><span></span></div>
+      <div class="chain-card">
+        <header><strong>${escapeHtml(result.role || "match")}</strong><small>${badge(result.client)}${escapeHtml(time(result.timestamp))} / #${result.lineNumber}</small></header>
+        <pre>${escapeHtml(result.text || "(无文本)")}</pre>
+      </div>
+    </article>`).join("") || `<div class="empty">没有匹配内容</div>`;
 });
 
 $("refresh").addEventListener("click", async () => {

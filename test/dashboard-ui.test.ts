@@ -33,8 +33,10 @@ describe("dashboard UI flow", () => {
     mkdirSync(transcriptRoot, { recursive: true });
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(transcriptRoot, "session.jsonl"), [
-      JSON.stringify({ type: "user", sessionId: "ui-session", timestamp: "2026-05-31T00:00:00Z", message: { role: "user", content: "please export this durable workflow" } }),
-      JSON.stringify({ type: "assistant", sessionId: "ui-session", timestamp: "2026-05-31T00:00:01Z", message: { role: "assistant", content: "workflow captured" } })
+      JSON.stringify({ type: "developer", sessionId: "ui-session", cwd: projectRoot, timestamp: "2026-05-31T00:00:00Z", content: "internal dashboard setup" }),
+      JSON.stringify({ type: "user", sessionId: "ui-session", cwd: projectRoot, timestamp: "2026-05-31T00:00:00Z", message: { role: "user", content: "please export this durable workflow" } }),
+      JSON.stringify({ type: "assistant", sessionId: "ui-session", cwd: projectRoot, timestamp: "2026-05-31T00:00:00Z", message: { role: "assistant", content: "[call playwright screenshot]" } }),
+      JSON.stringify({ type: "assistant", sessionId: "ui-session", cwd: projectRoot, timestamp: "2026-05-31T00:00:01Z", message: { role: "assistant", content: "workflow captured" } })
     ].join("\n"), "utf8");
     const paths = getHubPaths(dataDir);
     ensureHubDirectories(paths);
@@ -77,9 +79,15 @@ describe("dashboard UI flow", () => {
     await expectText(page, "EverCore");
 
     await page.getByRole("button", { name: "会话" }).click();
+    await page.locator("#projectFilter").fill(projectRoot);
+    await page.getByRole("button", { name: "搜索片段" }).click();
     await expectText(page, "ui-session");
     await page.locator(`[data-session="${imported.sessionId}"]`).click();
     await expectText(page, "please export this durable workflow");
+    await page.locator(".chain-event.user").first().waitFor({ timeout: 10000 });
+    await page.locator(".chain-event.assistant").first().waitFor({ timeout: 10000 });
+    await page.locator(".chain-event.tool").first().waitFor({ timeout: 10000 });
+    await page.locator(".chain-event.control").first().waitFor({ timeout: 10000 });
 
     await page.getByRole("button", { name: "Skills" }).click();
     await page.locator("#candTitle").fill("Project UI Flow");

@@ -7,7 +7,7 @@ import { extname, join } from "node:path";
 import { URL } from "node:url";
 import { ArchiveStore } from "./archive/store.js";
 import { exportSession } from "./archive/export.js";
-import { isReadableConversationEvent, readableConversationEvents } from "./archive/readable.js";
+import { isReadableConversationEvent } from "./archive/readable.js";
 import { EverCoreClient, syncPendingEverCoreSessions } from "./evercore/client.js";
 import { ensureHubDirectories, getEverCoreConfig, getHubPaths, getPackageRoot } from "./shared/config.js";
 import { OrchestratorStore } from "./orchestrator/store.js";
@@ -71,8 +71,7 @@ const server = createServer(async (request, response) => {
         response.writeHead(404).end("Not Found");
         return;
       }
-      const events = archiveStore.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1));
-      return json(response, { manifest, messages: readableConversationEvents(events) });
+      return json(response, { manifest, messages: archiveStore.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1)) });
     }
     if (request.method === "GET" && url.pathname === "/api/search") {
       const query = (url.searchParams.get("q") ?? "").trim();
