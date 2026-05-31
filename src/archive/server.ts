@@ -245,7 +245,7 @@ export function createArchiveServer(dataDir?: string): McpServer {
 
   server.registerTool("skill_candidate_promote", {
     title: "Promote Approved Skill Candidate",
-    description: "Write an approved candidate to the global skill directory or the project .agent-experience/skills directory.",
+    description: "Write an approved candidate to both Codex and Claude global skill directories or to the project .project-skills directory.",
     inputSchema: { candidate_id: z.string().min(1), approved: z.literal(true) },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }, async ({ candidate_id, approved }) => toolResult(promoteSkillCandidate(store, candidate_id, approved)));

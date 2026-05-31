@@ -29,8 +29,8 @@ The launcher starts Docker Compose in the EverCore root and starts the EverCore 
 
 ## Skill Rules
 
-- Global skills are written to `C:\Users\22289\.agents\skills\learned-<slug>\SKILL.md`.
-- Project skills are written to `<project>\.agent-experience\skills\<slug>\SKILL.md`.
+- Global skills are written to both `C:\Users\22289\.codex\skills\learned-<slug>\SKILL.md` and `C:\Users\22289\AppData\Local\Claude-3p\skills\learned-<slug>\SKILL.md`.
+- Project skills are written to `<project>\.project-skills\<slug>\SKILL.md`.
 - Project skills are not included by `-PublishPortableSkills`.
 - Every skill promotion requires explicit `approved=true`.
 

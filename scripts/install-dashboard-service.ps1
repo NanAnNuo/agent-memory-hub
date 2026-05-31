@@ -26,7 +26,7 @@ if (-not $alreadyListening) {
     Start-ScheduledTask -TaskName $TaskName
 }
 
-$tokenPath = Join-Path $HOME '.agent-collaboration-hub\dashboard.token'
+$tokenPath = Join-Path $HOME '.memory-hub\dashboard.token'
 for ($index = 0; $index -lt 20 -and -not (Test-Path -LiteralPath $tokenPath); $index++) {
     Start-Sleep -Milliseconds 250
 }

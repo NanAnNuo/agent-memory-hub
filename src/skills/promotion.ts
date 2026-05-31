@@ -1,8 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ArchiveStore } from "../archive/store.js";
 import type { SkillCandidate } from "../archive/types.js";
+
+export interface PromotionTarget {
+  label: "codex" | "claude" | "project";
+  path: string;
+}
 
 export function promoteSkillCandidate(store: ArchiveStore, candidateId: string, approved: boolean): SkillCandidate {
   if (!approved) {
@@ -22,25 +27,36 @@ export function promoteSkillCandidate(store: ArchiveStore, candidateId: string, 
     throw new Error(`Candidate target is ${candidate.promotionTarget}; this endpoint promotes skills only.`);
   }
 
-  const targetDir = candidate.scope === "global"
-    ? join(process.env.AGENT_HUB_GLOBAL_SKILLS_DIR ?? join(homedir(), ".agents", "skills"), `learned-${slugify(candidate.title)}`)
-    : projectSkillDir(candidate);
-  mkdirSync(targetDir, { recursive: true });
-  const targetPath = join(targetDir, "SKILL.md");
-  writeFileSync(targetPath, renderSkill(candidate), "utf8");
+  const targets = resolvePromotionTargets(candidate);
+  for (const target of targets) {
+    mkdirSync(dirname(target.path), { recursive: true });
+    writeFileSync(target.path, renderSkill(candidate), "utf8");
+  }
   return store.putSkillCandidate({
     ...candidate,
     status: "promoted",
-    targetPath,
+    targetPath: targets.map((target) => `${target.label}:${target.path}`).join("; "),
     promotedAt: new Date().toISOString()
   });
+}
+
+export function resolvePromotionTargets(candidate: SkillCandidate): PromotionTarget[] {
+  const slug = candidate.scope === "global" ? `learned-${slugify(candidate.title)}` : slugify(candidate.title);
+  if (candidate.scope === "global") {
+    const roots = globalSkillRoots();
+    return [
+      { label: "codex", path: join(roots.codex, slug, "SKILL.md") },
+      { label: "claude", path: join(roots.claude, slug, "SKILL.md") }
+    ];
+  }
+  return [{ label: "project", path: join(projectSkillDir(candidate), "SKILL.md") }];
 }
 
 function projectSkillDir(candidate: SkillCandidate): string {
   if (!candidate.projectRoot) {
     throw new Error("Project skill promotion requires project_root.");
   }
-  return join(resolve(candidate.projectRoot), ".agent-experience", "skills", slugify(candidate.title));
+  return join(resolve(candidate.projectRoot), ".project-skills", slugify(candidate.title));
 }
 
 function renderSkill(candidate: SkillCandidate): string {
@@ -71,4 +87,11 @@ function slugify(value: string): string {
 
 function singleLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function globalSkillRoots(): { codex: string; claude: string } {
+  return {
+    codex: process.env.AGENT_HUB_CODEX_SKILLS_DIR ?? join(homedir(), ".codex", "skills"),
+    claude: process.env.AGENT_HUB_CLAUDE_SKILLS_DIR ?? join(homedir(), "AppData", "Local", "Claude-3p", "skills")
+  };
 }

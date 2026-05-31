@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$HubRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$DataRoot = (Join-Path $HOME '.agent-collaboration-hub'),
+    [string]$DataRoot = (Join-Path $HOME '.memory-hub'),
     [switch]$ApplyRules,
     [switch]$PublishPortableSkills,
     [switch]$RegisterMcp,
@@ -53,7 +53,7 @@ function Publish-AghubMcp {
 if ($ApplyRules) {
     $rules = Get-Content -LiteralPath $ruleSource -Raw -Encoding UTF8
     Set-ManagedRuleBlock -Path (Join-Path $HOME '.codex\AGENTS.md') -Text $rules
-    Set-ManagedRuleBlock -Path (Join-Path $HOME '.claude\CLAUDE.md') -Text $rules
+    Set-ManagedRuleBlock -Path (Join-Path $env:LOCALAPPDATA 'Claude-3p\CLAUDE.md') -Text $rules
     Set-ManagedRuleBlock -Path (Join-Path $HOME '.config\opencode\AGENTS.md') -Text $rules
     Write-Output 'Published managed multi-agent rules to Codex, Claude, and OpenCode user instruction files.'
 }
@@ -61,7 +61,7 @@ if ($ApplyRules) {
 if ($PublishPortableSkills) {
     if (-not (Test-Path -LiteralPath $aghub)) { throw "AGHub CLI is missing: $aghub" }
     $skills = [ordered]@{}
-    foreach ($root in @((Join-Path $HOME '.codex\skills'), (Join-Path $HOME '.agents\skills'))) {
+    foreach ($root in @((Join-Path $HOME '.codex\skills'), (Join-Path $env:LOCALAPPDATA 'Claude-3p\skills'))) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($directory in Get-ChildItem -LiteralPath $root -Directory) {
             if ($directory.Name -eq '.system') { continue }
@@ -80,7 +80,7 @@ if ($PublishPortableSkills) {
         }
         $published += 1
     }
-    Write-Output "Submitted $published deduplicated portable skills to AGHub targets claude and opencode; existing managed entries are left unchanged if already present."
+    Write-Output "Submitted $published deduplicated portable Codex/Claude skills to AGHub targets claude and opencode; existing managed entries are left unchanged if already present."
 }
 
 if ($RegisterMcp) {

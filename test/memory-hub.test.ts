@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getHubPaths, ensureHubDirectories } from "../src/shared/config.js";
@@ -74,8 +74,10 @@ describe("EverCore sync, export, and skill promotion", () => {
 
   it("promotes global and project skills to separate directories", () => {
     const { root, store } = setupStore();
-    const globalRoot = join(root, "global-skills");
-    process.env.AGENT_HUB_GLOBAL_SKILLS_DIR = globalRoot;
+    const codexRoot = join(root, "codex-skills");
+    const claudeRoot = join(root, "claude-skills");
+    process.env.AGENT_HUB_CODEX_SKILLS_DIR = codexRoot;
+    process.env.AGENT_HUB_CLAUDE_SKILLS_DIR = claudeRoot;
     const projectRoot = join(root, "project");
     mkdirSync(projectRoot, { recursive: true });
     const globalId = "global-candidate";
@@ -107,10 +109,13 @@ describe("EverCore sync, export, and skill promotion", () => {
 
     const global = promoteSkillCandidate(store, globalId, true);
     const project = promoteSkillCandidate(store, projectId, true);
-    expect(global.targetPath).toContain(globalRoot);
-    expect(project.targetPath).toContain(join(projectRoot, ".agent-experience", "skills"));
-    expect(existsSync(global.targetPath!)).toBe(true);
-    expect(readFileSync(project.targetPath!, "utf8")).toContain("Keep this project-local.");
+    expect(global.targetPath).toContain(codexRoot);
+    expect(global.targetPath).toContain(claudeRoot);
+    expect(project.targetPath).toContain(join(projectRoot, ".project-skills"));
+    const globalSlug = `learned-${global.title.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 56)}`;
+    expect(existsSync(join(codexRoot, globalSlug, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(claudeRoot, globalSlug, "SKILL.md"))).toBe(true);
+    expect(readFileSync(join(projectRoot, ".project-skills", "project-only-workflow", "SKILL.md"), "utf8")).toContain("Keep this project-local.");
     store.close();
   });
 });

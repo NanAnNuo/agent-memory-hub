@@ -34,7 +34,7 @@ export function getPackageRoot(): string {
   return packageRoot;
 }
 
-export function getHubPaths(dataDir = process.env.AGENT_HUB_DATA_DIR ?? join(homedir(), ".agent-collaboration-hub")): HubPaths {
+export function getHubPaths(dataDir = process.env.AGENT_HUB_DATA_DIR ?? join(homedir(), ".memory-hub")): HubPaths {
   return {
     dataDir,
     archiveDatabase: join(dataDir, "archive.db"),

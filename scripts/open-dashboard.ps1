@@ -2,7 +2,7 @@
 param([int]$Port = 43121)
 
 $ErrorActionPreference = 'Stop'
-$tokenPath = Join-Path $HOME '.agent-collaboration-hub\dashboard.token'
+$tokenPath = Join-Path $HOME '.memory-hub\dashboard.token'
 if (-not (Test-Path -LiteralPath $tokenPath)) {
     throw 'Dashboard access token does not exist. Install and start the dashboard service first.'
 }

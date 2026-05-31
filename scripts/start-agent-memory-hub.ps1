@@ -51,7 +51,7 @@ try {
         }
     }
 
-    $tokenPath = Join-Path $HOME '.agent-collaboration-hub\dashboard.token'
+    $tokenPath = Join-Path $HOME '.memory-hub\dashboard.token'
     if (-not (Test-Port -Port $DashboardPort)) {
         $node = (Get-Command node -ErrorAction Stop).Source
         Start-Process -FilePath $node -ArgumentList @((Join-Path $HubRoot 'dist\dashboard-main.js')) -WorkingDirectory $HubRoot -WindowStyle Hidden
