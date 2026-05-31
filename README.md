@@ -16,6 +16,7 @@ npm run check
 ```
 
 Then open **Agent Memory Hub** from the Windows desktop.
+On this Windows profile the reliable desktop entry is `Agent Memory Hub.cmd`; it starts the local service and opens the visual dashboard.
 
 ## EverCore
 

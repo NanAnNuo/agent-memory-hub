@@ -12,7 +12,11 @@ if ([string]::IsNullOrWhiteSpace($HubRoot)) {
     $HubRoot = Split-Path -Parent $PSScriptRoot
 }
 if ([string]::IsNullOrWhiteSpace($EverCoreRoot)) {
-    $EverCoreRoot = 'D:\桌面\工作文件夹\项目\日常通用任务处理\EverOS\methods\EverCore'
+    $parent = Split-Path -Parent $HubRoot
+    $EverCoreRoot = Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'EverOS\methods\EverCore' } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
 }
 
 function Test-Port {
@@ -26,28 +30,32 @@ try {
         npm run build
     }
 
+    $env:AGENT_HUB_EVERCORE_ENABLED = 'false'
     if (-not $SkipEverCore) {
         if (-not (Test-Path -LiteralPath $EverCoreRoot)) {
-            throw "EverCore root not found: $EverCoreRoot"
-        }
-        $env:AGENT_HUB_EVERCORE_ROOT = $EverCoreRoot
-        $env:AGENT_HUB_EVERCORE_URL = "http://127.0.0.1:$EverCorePort"
-        $env:AGENT_HUB_EVERCORE_ENABLED = 'true'
+            Write-Warning "EverCore root not found. Dashboard will open without EverCore sync."
+        } else {
+            $env:AGENT_HUB_EVERCORE_ROOT = $EverCoreRoot
+            $env:AGENT_HUB_EVERCORE_URL = "http://127.0.0.1:$EverCorePort"
 
-        $envFile = Join-Path $EverCoreRoot '.env'
-        if (-not (Test-Path -LiteralPath $envFile)) {
-            throw "EverCore .env is missing: $envFile. Copy env.template to .env and fill the required LLM/vector keys."
-        }
-
-        Push-Location $EverCoreRoot
-        try {
-            docker compose up -d
-            if (-not (Test-Port -Port $EverCorePort)) {
-                $uv = (Get-Command uv -ErrorAction Stop).Source
-                Start-Process -FilePath $uv -ArgumentList @('run', 'python', 'src/run.py', '--port', "$EverCorePort") -WorkingDirectory $EverCoreRoot -WindowStyle Hidden
+            $envFile = Join-Path $EverCoreRoot '.env'
+            if (-not (Test-Path -LiteralPath $envFile)) {
+                Write-Warning "EverCore .env is missing: $envFile. Dashboard will open; configure EverCore .env to enable semantic memory sync."
+            } else {
+                Push-Location $EverCoreRoot
+                try {
+                    docker compose up -d
+                    if (-not (Test-Port -Port $EverCorePort)) {
+                        $uv = (Get-Command uv -ErrorAction Stop).Source
+                        Start-Process -FilePath $uv -ArgumentList @('run', 'python', 'src/run.py', '--port', "$EverCorePort") -WorkingDirectory $EverCoreRoot -WindowStyle Hidden
+                    }
+                    $env:AGENT_HUB_EVERCORE_ENABLED = 'true'
+                } catch {
+                    Write-Warning "EverCore startup failed: $($_.Exception.Message). Dashboard will still open."
+                } finally {
+                    Pop-Location
+                }
             }
-        } finally {
-            Pop-Location
         }
     }
 
@@ -66,6 +74,12 @@ try {
     $token = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
     Start-Process "http://127.0.0.1:$DashboardPort/#token=$token"
     Write-Output "Agent Memory Hub opened at http://127.0.0.1:$DashboardPort/"
+} catch {
+    Write-Error $_
+    Write-Host ""
+    Write-Host "Startup failed. Press Enter to close this window."
+    [void][Console]::ReadLine()
+    exit 1
 } finally {
     Pop-Location
 }
