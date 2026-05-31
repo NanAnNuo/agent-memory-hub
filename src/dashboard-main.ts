@@ -20,7 +20,6 @@ const archiveStore = new ArchiveStore(paths);
 const taskStore = new OrchestratorStore(paths);
 const syncService = new LiveSyncService(archiveStore);
 const everCoreClient = new EverCoreClient(getEverCoreConfig());
-await syncService.start();
 
 const host = "127.0.0.1";
 const port = Number(process.env.AGENT_HUB_DASHBOARD_PORT ?? "43121");
@@ -57,7 +56,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       const client = url.searchParams.get("client") ?? undefined;
       const project = (url.searchParams.get("project") ?? "").toLowerCase();
-      const sessions = archiveStore.listManifests(client).filter((session) => !project || (session.project ?? "").toLowerCase().includes(project));
+      const sessions = archiveStore.listSessionItems(client).filter((session) => !project || (session.project ?? "").toLowerCase().includes(project));
       return json(response, sessions.slice(0, 200));
     }
     if (request.method === "GET" && url.pathname === "/api/session") {
@@ -71,7 +70,23 @@ const server = createServer(async (request, response) => {
         response.writeHead(404).end("Not Found");
         return;
       }
-      return json(response, { manifest, messages: archiveStore.getMessages(sessionId, 0, Math.max(manifest.eventCount, 1)) });
+      const offset = numberParam(url, "offset", 0);
+      const limit = Math.min(numberParam(url, "limit", 180), 500);
+      const messages = archiveStore.getMessages(sessionId, offset, limit);
+      const nextOffset = messages.length ? messages[messages.length - 1].lineNumber + 1 : offset;
+      return json(response, { manifest, messages, nextOffset, hasMore: nextOffset < manifest.eventCount });
+    }
+    if (request.method === "DELETE" && url.pathname === "/api/session") {
+      if (request.headers.origin && request.headers.origin !== `http://${host}:${port}`) {
+        response.writeHead(403).end("Forbidden");
+        return;
+      }
+      const sessionId = url.searchParams.get("id");
+      if (!sessionId) {
+        response.writeHead(400).end("Missing id");
+        return;
+      }
+      return json(response, archiveStore.deleteSession(sessionId));
     }
     if (request.method === "GET" && url.pathname === "/api/search") {
       const query = (url.searchParams.get("q") ?? "").trim();
@@ -170,6 +185,11 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   process.stderr.write(`Agent Memory Hub dashboard available at http://${host}:${port}\n`);
+  if (process.env.AGENT_HUB_BACKGROUND_SYNC === "true") {
+    void syncService.start();
+  } else {
+    syncService.status.lastReason = "background sync disabled";
+  }
 });
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
@@ -216,6 +236,11 @@ function requiredString(body: Record<string, unknown>, key: string): string {
 
 function numberField(body: Record<string, unknown>, key: string, fallback: number): number {
   return typeof body[key] === "number" && Number.isFinite(body[key]) ? Number(body[key]) : fallback;
+}
+
+function numberParam(url: URL, key: string, fallback: number): number {
+  const parsed = Number(url.searchParams.get(key));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function arrayField(body: Record<string, unknown>, key: string): string[] {

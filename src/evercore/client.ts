@@ -65,7 +65,8 @@ export class EverCoreClient {
   }
 
   async syncSession(store: ArchiveStore, manifest: SessionManifest): Promise<{ sentMessages: number }> {
-    const events = store.getMessages(manifest.sessionId, 0, Math.max(manifest.eventCount, 1));
+    const maxEvents = Number(process.env.AGENT_HUB_EVERCORE_MAX_EVENTS ?? "80");
+    const events = store.getMessages(manifest.sessionId, 0, Math.max(Math.min(manifest.eventCount, maxEvents), 1));
     const messages = toAgentMessages(manifest, events);
     if (!messages.length) {
       store.markEverCoreSynced(manifest.sessionId, manifest.fileSha256);
@@ -106,7 +107,7 @@ export class EverCoreClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(Number(process.env.AGENT_HUB_EVERCORE_TIMEOUT_MS ?? "15000"))
     });
     if (!response.ok) {
       throw new Error(`EverCore ${path} failed with HTTP ${response.status}: ${await response.text()}`);

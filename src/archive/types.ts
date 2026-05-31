@@ -41,6 +41,11 @@ export interface SessionManifest {
   ingestedAt: string;
 }
 
+export interface SessionListItem extends SessionManifest {
+  title: string;
+  textBytes: number;
+}
+
 export interface SourceRange {
   sessionId: string;
   offset: number;

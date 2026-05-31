@@ -2,7 +2,7 @@ import { existsSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots, getEverCoreConfig } from "../shared/config.js";
-import { findJsonlFiles, importJsonlFile, importOpenCodeDatabase } from "../archive/importers.js";
+import { findJsonlFilesAsync, importJsonlFile, importOpenCodeDatabase } from "../archive/importers.js";
 import { ArchiveStore } from "../archive/store.js";
 import type { ClientKind } from "../archive/types.js";
 import { EverCoreClient, syncPendingEverCoreSessions } from "../evercore/client.js";
@@ -38,29 +38,38 @@ export class LiveSyncService {
   constructor(store: ArchiveStore) {
     this.store = store;
     const roots = getAllowedTranscriptRoots();
+    const useDefaultRoots = process.env.AGENT_HUB_INCLUDE_DEFAULT_TRANSCRIPT_ROOTS !== "false";
     this.roots = [
-      { client: "codex", path: roots[0] ?? join(homedir(), ".codex", "sessions") },
-      { client: "claude", path: roots[1] ?? join(homedir(), ".claude", "projects") }
-    ];
+      roots[0] ? { client: "codex" as const, path: roots[0] } : useDefaultRoots ? { client: "codex" as const, path: join(homedir(), ".codex", "sessions") } : null,
+      roots[1] ? { client: "claude" as const, path: roots[1] } : useDefaultRoots ? { client: "claude" as const, path: join(homedir(), ".claude", "projects") } : null
+    ].filter((root): root is { client: "codex" | "claude"; path: string } => root !== null);
   }
 
   async start(): Promise<void> {
-    await this.syncAll("startup");
-    for (const source of this.roots) {
-      if (!existsSync(source.path)) {
-        continue;
-      }
-      const watcher = watch(source.path, { recursive: true }, (_eventType, filename) => {
-        if (!filename || filename.toLowerCase().endsWith(".jsonl")) {
-          this.scheduleSync(`${source.client} filesystem change`);
-        }
-      });
-      watcher.on("error", (error) => this.addError(error));
-      this.watchers.push(watcher);
+    if (process.env.AGENT_HUB_STARTUP_SYNC === "true") {
+      await this.syncAll("startup");
+    } else {
+      this.status.lastReason = "startup sync disabled";
     }
-    this.timer = setInterval(() => {
-      void this.syncOpenCode("opencode database poll");
-    }, Number(process.env.AGENT_HUB_OPENCODE_POLL_MS ?? "2000"));
+    if (process.env.AGENT_HUB_LIVE_WATCH === "true") {
+      for (const source of this.roots) {
+        if (!existsSync(source.path)) {
+          continue;
+        }
+        const watcher = watch(source.path, { recursive: true }, (_eventType, filename) => {
+          if (!filename || filename.toLowerCase().endsWith(".jsonl")) {
+            this.scheduleSync(`${source.client} filesystem change`);
+          }
+        });
+        watcher.on("error", (error) => this.addError(error));
+        this.watchers.push(watcher);
+      }
+    }
+    if (process.env.AGENT_HUB_OPENCODE_POLL === "true") {
+      this.timer = setInterval(() => {
+        void this.syncOpenCode("opencode database poll");
+      }, Number(process.env.AGENT_HUB_OPENCODE_POLL_MS ?? "2000"));
+    }
   }
 
   async syncAll(reason: string): Promise<void> {
@@ -111,9 +120,14 @@ export class LiveSyncService {
         if (!existsSync(source.path)) {
           continue;
         }
-        for (const file of findJsonlFiles(source.path)) {
+        let fileIndex = 0;
+        for await (const file of findJsonlFilesAsync(source.path)) {
           const outcome = this.store.ingestSession(importJsonlFile(source.client, file, source.path));
           this.status.insertedEvents[source.client] += outcome.insertedEvents;
+          fileIndex += 1;
+          if (fileIndex % 2 === 0) {
+            await yieldToEventLoop();
+          }
         }
       }
       this.ingestOpenCodeDatabases();
@@ -159,7 +173,12 @@ export class LiveSyncService {
     if (!config.enabled) {
       return;
     }
-    const result = await syncPendingEverCoreSessions(this.store, new EverCoreClient(config), 20);
+    if (process.env.AGENT_HUB_EVERCORE_AUTO_SYNC !== "true") {
+      this.status.evercore.lastResult = "auto sync disabled";
+      return;
+    }
+    const limit = Number(process.env.AGENT_HUB_EVERCORE_SYNC_LIMIT ?? "2");
+    const result = await syncPendingEverCoreSessions(this.store, new EverCoreClient(config), limit);
     this.status.evercore.lastSyncAt = new Date().toISOString();
     this.status.evercore.lastResult = `${result.synced} synced, ${result.failed} failed, ${result.messages} messages`;
   }
@@ -168,4 +187,8 @@ export class LiveSyncService {
     const message = error instanceof Error ? error.message : String(error);
     this.status.errors = [...this.status.errors.slice(-4), message];
   }
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }

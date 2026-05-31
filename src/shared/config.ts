@@ -73,10 +73,12 @@ export function loadModelProfiles(path = process.env.AGENT_HUB_MODEL_PROFILES ??
 }
 
 export function getAllowedTranscriptRoots(): string[] {
-  const defaults = [
-    join(homedir(), ".codex", "sessions"),
-    join(homedir(), ".claude", "projects")
-  ];
+  const defaults = process.env.AGENT_HUB_INCLUDE_DEFAULT_TRANSCRIPT_ROOTS === "false"
+    ? []
+    : [
+      join(homedir(), ".codex", "sessions"),
+      join(homedir(), ".claude", "projects")
+    ];
   const configured = (process.env.AGENT_HUB_TRANSCRIPT_ROOTS ?? "")
     .split(";")
     .map((path) => path.trim())

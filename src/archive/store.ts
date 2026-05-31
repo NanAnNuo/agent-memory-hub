@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { appendFileSync } from "node:fs";
 import type { HubPaths } from "../shared/config.js";
 import { redactSensitive } from "../shared/redact.js";
-import type { EverCoreSyncRecord, ImportedSession, SessionManifest, SkillCandidate, StoredEvent, TaskCheckpoint } from "./types.js";
+import type { EverCoreSyncRecord, ImportedSession, SessionListItem, SessionManifest, SkillCandidate, StoredEvent, TaskCheckpoint } from "./types.js";
 
 type DatabaseType = InstanceType<typeof Database>;
 
@@ -52,6 +52,10 @@ export class ArchiveStore {
         UNIQUE(source_path, line_number, raw_sha256)
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS event_fts USING fts5(searchable_text, session_id UNINDEXED, event_id UNINDEXED);
+      CREATE TABLE IF NOT EXISTS deleted_sessions (
+        session_id TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS checkpoints (
         task_id TEXT PRIMARY KEY,
         checkpoint_json TEXT NOT NULL,
@@ -84,6 +88,9 @@ export class ArchiveStore {
   }
 
   ingestSession(session: ImportedSession): { insertedEvents: number; sessionId: string } {
+    if (this.isSessionDeleted(session.sessionId)) {
+      return { insertedEvents: 0, sessionId: session.sessionId };
+    }
     const insertEvent = this.db.prepare(`
       INSERT OR IGNORE INTO events (
         session_id, client, source_path, line_number, timestamp, role, event_type,
@@ -150,6 +157,13 @@ export class ArchiveStore {
     return (rows as Array<Record<string, unknown>>).map(mapManifest);
   }
 
+  listSessionItems(client?: string): SessionListItem[] {
+    return this.listManifests(client).map((manifest) => ({
+      ...manifest,
+      ...this.getSessionListMetadata(manifest.sessionId)
+    }));
+  }
+
   getManifest(sessionId: string): SessionManifest | null {
     const row = this.db.prepare("SELECT * FROM sessions WHERE session_id = ?").get(sessionId);
     return row ? mapManifest(row as Record<string, unknown>) : null;
@@ -161,6 +175,21 @@ export class ArchiveStore {
       ORDER BY line_number ASC, id ASC LIMIT ?
     `).all(sessionId, offset, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => mapEvent(row, includeRaw));
+  }
+
+  deleteSession(sessionId: string): { deleted: boolean } {
+    const manifest = this.getManifest(sessionId);
+    if (!manifest) {
+      return { deleted: false };
+    }
+    this.db.transaction(() => {
+      this.db.prepare("INSERT OR REPLACE INTO deleted_sessions(session_id, deleted_at) VALUES (?, ?)").run(sessionId, new Date().toISOString());
+      this.db.prepare("DELETE FROM event_fts WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM evercore_sync WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
+    })();
+    return { deleted: true };
   }
 
   getRecentMessages(sessionIds: string[], limit: number): StoredEvent[] {
@@ -290,6 +319,28 @@ export class ArchiveStore {
       : this.db.prepare("SELECT * FROM skill_candidates ORDER BY created_at DESC").all();
     return (rows as Array<Record<string, unknown>>).map(mapSkillCandidate);
   }
+
+  private isSessionDeleted(sessionId: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM deleted_sessions WHERE session_id = ?").get(sessionId));
+  }
+
+  private getSessionListMetadata(sessionId: string): Pick<SessionListItem, "title" | "textBytes"> {
+    const titleRow = this.db.prepare(`
+      SELECT searchable_text FROM events
+      WHERE session_id = ? AND role = 'user' AND trim(searchable_text) <> ''
+      ORDER BY line_number ASC, id ASC LIMIT 1
+    `).get(sessionId) as { searchable_text: string } | undefined;
+    const sizeRow = this.db.prepare("SELECT COALESCE(SUM(length(searchable_text)), 0) AS text_bytes FROM events WHERE session_id = ?").get(sessionId) as { text_bytes: number };
+    return {
+      title: summarizeTitle(titleRow?.searchable_text) ?? sessionId,
+      textBytes: Number(sizeRow.text_bytes)
+    };
+  }
+}
+
+function summarizeTitle(value: string | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized ? normalized.slice(0, 48) : null;
 }
 
 function mapManifest(row: Record<string, unknown>): SessionManifest {

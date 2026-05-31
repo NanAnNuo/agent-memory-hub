@@ -12,8 +12,16 @@ if ([string]::IsNullOrWhiteSpace($HubRoot)) {
     $HubRoot = Split-Path -Parent $PSScriptRoot
 }
 if ([string]::IsNullOrWhiteSpace($EverCoreRoot)) {
-    $parent = Split-Path -Parent $HubRoot
-    $EverCoreRoot = Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+    $candidateParents = New-Object System.Collections.Generic.List[string]
+    $candidateParents.Add((Split-Path -Parent $HubRoot))
+    $hubItem = Get-Item -LiteralPath $HubRoot -ErrorAction SilentlyContinue
+    if ($hubItem -and $hubItem.Target) {
+        $candidateParents.Add((Split-Path -Parent $hubItem.Target))
+    }
+    $EverCoreRoot = $candidateParents |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique |
+        ForEach-Object { Get-ChildItem -LiteralPath $_ -Directory -ErrorAction SilentlyContinue } |
         ForEach-Object { Join-Path $_.FullName 'EverOS\methods\EverCore' } |
         Where-Object { Test-Path -LiteralPath $_ } |
         Select-Object -First 1
@@ -21,7 +29,7 @@ if ([string]::IsNullOrWhiteSpace($EverCoreRoot)) {
 
 function Test-Port {
     param([int]$Port)
-    return [bool](Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
 Push-Location $HubRoot
@@ -44,12 +52,24 @@ try {
             } else {
                 Push-Location $EverCoreRoot
                 try {
-                    docker compose up -d
+                    try {
+                        docker compose up -d
+                    } catch {
+                        Write-Warning "EverCore Docker dependency startup reported a warning/failure: $($_.Exception.Message). Continuing because compatible services may already be running."
+                    }
                     if (-not (Test-Port -Port $EverCorePort)) {
                         $uv = (Get-Command uv -ErrorAction Stop).Source
+                        $env:PYTHONIOENCODING = 'utf-8'
                         Start-Process -FilePath $uv -ArgumentList @('run', 'python', 'src/run.py', '--port', "$EverCorePort") -WorkingDirectory $EverCoreRoot -WindowStyle Hidden
                     }
-                    $env:AGENT_HUB_EVERCORE_ENABLED = 'true'
+                    for ($index = 0; $index -lt 60 -and -not (Test-Port -Port $EverCorePort); $index++) {
+                        Start-Sleep -Seconds 1
+                    }
+                    if (Test-Port -Port $EverCorePort) {
+                        $env:AGENT_HUB_EVERCORE_ENABLED = 'true'
+                    } else {
+                        Write-Warning "EverCore API did not become reachable on port $EverCorePort. Dashboard will open without EverCore sync."
+                    }
                 } catch {
                     Write-Warning "EverCore startup failed: $($_.Exception.Message). Dashboard will still open."
                 } finally {

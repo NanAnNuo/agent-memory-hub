@@ -82,6 +82,20 @@ describe("archive store and budgeted context", () => {
     store.close();
   });
 
+  it("deletes archived sessions and tombstones them against re-import", () => {
+    const { sourceRoot, store } = setupStore();
+    const source = join(sourceRoot, "delete.jsonl");
+    writeFileSync(source, JSON.stringify({ type: "user", sessionId: "delete-me", message: { role: "user", content: "remove this conversation" } }), "utf8");
+    const imported = importJsonlFile("codex", source, sourceRoot);
+    expect(store.ingestSession(imported).insertedEvents).toBe(1);
+    expect(store.deleteSession(imported.sessionId)).toEqual({ deleted: true });
+    expect(store.getManifest(imported.sessionId)).toBeNull();
+    expect(store.getMessages(imported.sessionId, 0, 10)).toEqual([]);
+    expect(store.ingestSession(imported).insertedEvents).toBe(0);
+    expect(store.getManifest(imported.sessionId)).toBeNull();
+    store.close();
+  });
+
   it("imports OpenCode session messages without reading account token tables", () => {
     const { root } = setupStore();
     const databasePath = join(root, "opencode.db");

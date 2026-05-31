@@ -12,6 +12,9 @@ if (hashToken) {
 const dashboardToken = sessionStorage.getItem("agentMemoryHubToken");
 let latestSessions = [];
 let selectedSessionId = "";
+let selectedSession = null;
+let currentSessionCursor = 0;
+let currentSessionHasMore = false;
 
 async function api(path, options = {}) {
   if (!dashboardToken) throw new Error("请通过桌面入口或启动脚本打开 Agent Memory Hub");
@@ -81,12 +84,19 @@ function renderSessions(sessions) {
   document.querySelectorAll("[data-session]").forEach((button) => {
     button.addEventListener("click", () => showSession(button.dataset.session));
   });
+  document.querySelectorAll("[data-delete-session]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await deleteSession(button.dataset.deleteSession);
+    });
+  });
 }
 
 function renderProjectTree(sessions) {
   const projects = groupByProject(sessions);
+  const forceOpen = Boolean($("projectFilter").value.trim() || $("searchBox").value.trim());
   return projects.map((project, index) => `
-    <details class="project-node" ${index < 6 ? "open" : ""}>
+    <details class="project-node" ${forceOpen || index < 6 ? "open" : ""}>
       <summary>
         <span class="tree-check"></span>
         <span class="tree-caret">›</span>
@@ -111,7 +121,7 @@ function renderThread(thread) {
       <summary>
         <span class="tree-caret">›</span>
         <span class="thread-icon">#</span>
-        <span class="tree-title"><strong>${escapeHtml(thread.name)}</strong><small>${thread.sessions.length} 子线程</small></span>
+        <span class="tree-title"><strong>${escapeHtml(session.title || thread.name)}</strong><small>${relativeTime(newestTimestamp(thread.sessions))} · ${thread.sessions.length - 1} 个子线程 · ${formatBytes(sumBytes(thread.sessions))}</small></span>
       </summary>
       <div class="child-list">
         ${thread.sessions.map((child) => renderSessionLeaf(child, "child")).join("")}
@@ -124,9 +134,16 @@ function renderSessionLeaf(session, kind) {
   const active = selectedSessionId === session.sessionId ? " active" : "";
   return `
     <button class="session-row ${kind}${active}" data-session="${escapeHtml(session.sessionId)}">
-      <span>${badge(session.client)}${escapeHtml(time(session.lastTimestamp))}</span>
-      <strong>${escapeHtml(session.sourceSessionId || session.sessionId)}</strong>
-      <small>${escapeHtml(session.sessionId)} / ${session.eventCount} events</small>
+      <span class="session-dot"></span>
+      <span class="session-copy">
+        <strong>${escapeHtml(session.title || session.sourceSessionId || session.sessionId)}</strong>
+        <small>${relativeTime(session.lastTimestamp)} · 0 个子线程 · ${formatBytes(session.textBytes || 0)}</small>
+      </span>
+      <span class="session-meta">${badge(session.client)}</span>
+      <span class="session-actions">
+        <span class="session-time">${escapeHtml(time(session.lastTimestamp))}</span>
+        <span class="delete-session" data-delete-session="${escapeHtml(session.sessionId)}" title="删除对话">删除</span>
+      </span>
     </button>`;
 }
 
@@ -163,12 +180,58 @@ function newestTimestamp(sessions) {
 
 async function showSession(sessionId) {
   selectedSessionId = sessionId;
-  const data = await api(`/api/session?id=${encodeURIComponent(sessionId)}`);
+  selectedSession = latestSessions.find((session) => session.sessionId === sessionId) || null;
+  currentSessionCursor = 0;
+  currentSessionHasMore = false;
+  const data = await api(`/api/session?id=${encodeURIComponent(sessionId)}&offset=0&limit=180`);
+  currentSessionCursor = data.nextOffset;
+  currentSessionHasMore = data.hasMore;
   $("exportSessionId").value = sessionId;
-  $("resultCount").textContent = `${data.messages.length} 条事件`;
+  $("resultCount").textContent = `${data.manifest.eventCount} 条事件`;
   $("details").className = "callchain tall";
-  $("details").innerHTML = data.messages.map(renderEvent).join("") || `<div class="empty">无内容</div>`;
+  $("details").innerHTML = renderSessionHeader(data.manifest) + data.messages.map(renderEvent).join("") + renderLoadMore();
   renderSessions(latestSessions);
+}
+
+async function loadMoreSessionEvents() {
+  if (!selectedSessionId || !currentSessionHasMore) return;
+  const data = await api(`/api/session?id=${encodeURIComponent(selectedSessionId)}&offset=${currentSessionCursor}&limit=180`);
+  currentSessionCursor = data.nextOffset;
+  currentSessionHasMore = data.hasMore;
+  document.querySelector(".load-more-row")?.remove();
+  $("details").insertAdjacentHTML("beforeend", data.messages.map(renderEvent).join("") + renderLoadMore());
+}
+
+async function deleteSession(sessionId) {
+  const session = latestSessions.find((item) => item.sessionId === sessionId);
+  const title = session?.title || session?.sourceSessionId || sessionId;
+  if (!confirm(`删除对话：${title}\n此操作会从 Hub 归档中移除，并阻止后续自动重新导入该会话。`)) {
+    return;
+  }
+  await api(`/api/session?id=${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  if (selectedSessionId === sessionId) {
+    selectedSessionId = "";
+    selectedSession = null;
+    $("details").className = "feed tall empty";
+    $("details").textContent = "选择会话或搜索关键词";
+    $("resultCount").textContent = "待查询";
+  }
+  renderSessions(await loadSessions());
+}
+
+function renderSessionHeader(manifest) {
+  return `
+    <section class="session-open-header">
+      <div>
+        <strong>${escapeHtml(selectedSession?.title || manifest.sourceSessionId || manifest.sessionId)}</strong>
+        <p>编号：${escapeHtml(manifest.sessionId)}${manifest.sourceSessionId ? ` / 源编号：${escapeHtml(manifest.sourceSessionId)}` : ""}</p>
+      </div>
+      <small>${badge(manifest.client)}${escapeHtml(time(manifest.lastTimestamp))} · ${formatBytes(selectedSession?.textBytes || 0)}</small>
+    </section>`;
+}
+
+function renderLoadMore() {
+  return currentSessionHasMore ? `<div class="load-more-row"><button id="loadMoreEvents" type="button">加载更多调用链</button></div>` : "";
 }
 
 function renderEvent(event) {
@@ -203,6 +266,28 @@ function eventKind(event) {
 
 function looksLikeToolText(text) {
   return text.startsWith("[call") || text.startsWith("[tool") || text.startsWith("tool_call") || text.startsWith("function_call") || text.startsWith("<tool") || text.startsWith("{\"cmd\"") || text.startsWith("{\"tool\"");
+}
+
+function sumBytes(sessions) {
+  return sessions.reduce((sum, session) => sum + (session.textBytes || 0), 0);
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 1024 * 100 ? 1 : 0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function relativeTime(value) {
+  if (!value) return "--";
+  const diff = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(diff)) return time(value);
+  const minutes = Math.max(1, Math.round(diff / 60000));
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} 小时前`;
+  const days = Math.round(hours / 24);
+  return `${days} 天前`;
 }
 
 function renderCandidates(candidates) {
@@ -249,6 +334,12 @@ $("sessionFilters").addEventListener("submit", async (event) => {
     </article>`).join("") || `<div class="empty">没有匹配内容</div>`;
 });
 
+document.addEventListener("click", async (event) => {
+  if (event.target?.id === "loadMoreEvents") {
+    await loadMoreSessionEvents();
+  }
+});
+
 $("refresh").addEventListener("click", async () => {
   await api("/api/sync", { method: "POST" });
   await refresh();
@@ -270,6 +361,12 @@ $("memoryForm").addEventListener("submit", async (event) => {
 
 $("candidateForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  await createCandidate();
+});
+
+$("createCandidate").addEventListener("click", createCandidate);
+
+async function createCandidate() {
   await api("/api/candidates", {
     method: "POST",
     body: JSON.stringify({
@@ -281,9 +378,9 @@ $("candidateForm").addEventListener("submit", async (event) => {
       evidence: $("candEvidence").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
     })
   });
-  event.target.reset();
-  await refresh();
-});
+  HTMLFormElement.prototype.reset.call($("candidateForm"));
+  renderCandidates(await api("/api/candidates?status=pending"));
+}
 
 $("exportForm").addEventListener("submit", async (event) => {
   event.preventDefault();

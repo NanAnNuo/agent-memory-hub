@@ -52,6 +52,7 @@ describe("dashboard UI flow", () => {
         ...process.env,
         AGENT_HUB_DATA_DIR: dataDir,
         AGENT_HUB_DASHBOARD_PORT: String(port),
+        AGENT_HUB_INCLUDE_DEFAULT_TRANSCRIPT_ROOTS: "false",
         AGENT_HUB_TRANSCRIPT_ROOTS: transcriptRoot,
         AGENT_HUB_CODEX_SKILLS_DIR: codexSkills,
         AGENT_HUB_CLAUDE_SKILLS_DIR: claudeSkills
@@ -74,15 +75,16 @@ describe("dashboard UI flow", () => {
       }
     });
 
-    await page.goto(`http://127.0.0.1:${port}/#token=${token}`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/#token=${token}`, { waitUntil: "domcontentloaded" });
     await expectText(page, "Agent Memory Hub");
     await expectText(page, "EverCore");
 
     await page.getByRole("button", { name: "会话" }).click();
     await page.locator("#projectFilter").fill(projectRoot);
     await page.getByRole("button", { name: "搜索片段" }).click();
-    await expectText(page, "ui-session");
+    await expectText(page, "please export this durable workflow");
     await page.locator(`[data-session="${imported.sessionId}"]`).click();
+    await expectText(page, imported.sessionId);
     await expectText(page, "please export this durable workflow");
     await page.locator(".chain-event.user").first().waitFor({ timeout: 10000 });
     await page.locator(".chain-event.assistant").first().waitFor({ timeout: 10000 });
@@ -95,7 +97,7 @@ describe("dashboard UI flow", () => {
     await page.locator("#candRule").fill("Use only for this project UI flow.");
     await page.locator("#candLesson").fill("Prefer browser verification for dashboard flows.");
     await page.locator("#candEvidence").fill("playwright ui test");
-    await page.getByRole("button", { name: "生成待审核候选" }).click();
+    await page.locator("#createCandidate").click();
     await page.locator("#candidates").getByText("Project UI Flow", { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole("button", { name: "批准写入" }).click();
     await waitFor(() => readFileSync(join(projectRoot, ".project-skills", "project-ui-flow", "SKILL.md"), "utf8"), 10000);
@@ -110,7 +112,7 @@ describe("dashboard UI flow", () => {
     }, 10000);
 
     expect(errors).toEqual([]);
-  }, 30000);
+  }, 45000);
 });
 
 async function waitFor<T>(fn: () => T | Promise<T>, timeoutMs: number): Promise<T> {

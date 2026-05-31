@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readdir, stat } from "node:fs/promises";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import Database from "better-sqlite3";
@@ -24,6 +25,20 @@ export function findJsonlFiles(root: string): string[] {
   }
   visit(root);
   return found.sort();
+}
+
+export async function* findJsonlFilesAsync(root: string): AsyncGenerator<string> {
+  const info = await stat(root);
+  if (!info.isDirectory()) {
+    if (root.toLowerCase().endsWith(".jsonl")) {
+      yield root;
+    }
+    return;
+  }
+  const entries = await readdir(root);
+  for (const entry of entries.sort()) {
+    yield* findJsonlFilesAsync(join(root, entry));
+  }
 }
 
 function stringsFromContent(value: unknown): string[] {
