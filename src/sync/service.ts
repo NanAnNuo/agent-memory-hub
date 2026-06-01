@@ -1,6 +1,6 @@
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots } from "../shared/config.js";
 import { findJsonlFilesAsync, importJsonlFile, importOpenCodeDatabase } from "../archive/importers.js";
 import { ArchiveStore } from "../archive/store.js";
@@ -45,15 +45,19 @@ export class LiveSyncService {
   }
 
   async start(): Promise<void> {
-    void this.syncAll("startup");
-    if (process.env.AGENT_HUB_LIVE_WATCH === "true") {
+    if (process.env.AGENT_HUB_STARTUP_SYNC === "true") {
+      setTimeout(() => {
+        void this.syncAll("startup");
+      }, Number(process.env.AGENT_HUB_STARTUP_SYNC_DELAY_MS ?? "15000"));
+    }
+    if (process.env.AGENT_HUB_LIVE_WATCH !== "false") {
       for (const source of this.roots) {
         if (!existsSync(source.path)) {
           continue;
         }
         const watcher = watch(source.path, { recursive: true }, (_eventType, filename) => {
-          if (!filename || filename.toLowerCase().endsWith(".jsonl")) {
-            this.scheduleSync(`${source.client} filesystem change`);
+          if (filename && filename.toLowerCase().endsWith(".jsonl")) {
+            this.scheduleFileSync(source.client, source.path, resolve(source.path, filename), `${source.client} file change`);
           }
         });
         watcher.on("error", (error) => this.addError(error));
@@ -108,6 +112,25 @@ export class LiveSyncService {
     }, 250);
   }
 
+  private scheduleFileSync(client: "codex" | "claude", root: string, file: string, reason: string): void {
+    if (this.debounce) {
+      clearTimeout(this.debounce);
+    }
+    this.debounce = setTimeout(() => {
+      void this.syncJsonlFile(client, root, file, reason);
+    }, 350);
+  }
+
+  private async syncJsonlFile(client: "codex" | "claude", root: string, file: string, reason: string): Promise<void> {
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+    this.inFlight = this.performJsonlFileSync(client, root, file, reason).finally(() => {
+      this.inFlight = null;
+    });
+    return this.inFlight;
+  }
+
   private async performSync(reason: string): Promise<void> {
     this.status.running = true;
     try {
@@ -120,7 +143,7 @@ export class LiveSyncService {
           const outcome = this.store.ingestSession(importJsonlFile(source.client, file, source.path));
           this.status.insertedEvents[source.client] += outcome.insertedEvents;
           fileIndex += 1;
-          if (fileIndex % 2 === 0) {
+          if (fileIndex % 1 === 0) {
             await yieldToEventLoop();
           }
         }
@@ -141,6 +164,23 @@ export class LiveSyncService {
     try {
       this.ingestOpenCodeDatabases();
       await this.syncLocalMemoryState();
+      this.status.lastSyncAt = new Date().toISOString();
+      this.status.lastReason = reason;
+    } catch (error) {
+      this.addError(error);
+    } finally {
+      this.status.running = false;
+    }
+  }
+
+  private async performJsonlFileSync(client: "codex" | "claude", root: string, file: string, reason: string): Promise<void> {
+    this.status.running = true;
+    try {
+      if (existsSync(file)) {
+        const outcome = this.store.ingestSession(importJsonlFile(client, file, root));
+        this.status.insertedEvents[client] += outcome.insertedEvents;
+        await this.syncLocalMemoryState();
+      }
       this.status.lastSyncAt = new Date().toISOString();
       this.status.lastReason = reason;
     } catch (error) {

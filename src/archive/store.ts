@@ -128,6 +128,8 @@ export class ArchiveStore {
         created_at TEXT NOT NULL,
         promoted_at TEXT
       );
+      CREATE INDEX IF NOT EXISTS idx_events_session_line ON events(session_id, line_number, id);
+      CREATE INDEX IF NOT EXISTS idx_events_session_role_line ON events(session_id, role, line_number, id);
     `);
   }
 
@@ -202,9 +204,33 @@ export class ArchiveStore {
   }
 
   listSessionItems(client?: string): SessionListItem[] {
-    return this.listManifests(client).map((manifest) => ({
-      ...manifest,
-      ...this.getSessionListMetadata(manifest.sessionId)
+    const where = client ? "WHERE s.client = ?" : "";
+    const args = client ? [client] : [];
+    const rows = this.db.prepare(`
+      WITH first_user AS (
+        SELECT session_id, searchable_text FROM (
+          SELECT session_id, searchable_text,
+            ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY line_number ASC, id ASC) AS rn
+          FROM events
+          WHERE role = 'user' AND trim(searchable_text) <> ''
+        ) WHERE rn = 1
+      ),
+      sizes AS (
+        SELECT session_id, COALESCE(SUM(length(searchable_text)), 0) AS text_bytes
+        FROM events
+        GROUP BY session_id
+      )
+      SELECT s.*, first_user.searchable_text AS title_source, COALESCE(sizes.text_bytes, 0) AS text_bytes
+      FROM sessions s
+      LEFT JOIN first_user ON first_user.session_id = s.session_id
+      LEFT JOIN sizes ON sizes.session_id = s.session_id
+      ${where}
+      ORDER BY s.last_timestamp DESC
+    `).all(...args) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      ...mapManifest(row),
+      title: summarizeTitle(row.title_source ? String(row.title_source) : undefined) ?? String(row.session_id),
+      textBytes: Number(row.text_bytes)
     }));
   }
 
@@ -531,18 +557,6 @@ export class ArchiveStore {
     return Boolean(this.db.prepare("SELECT 1 FROM deleted_sessions WHERE session_id = ?").get(sessionId));
   }
 
-  private getSessionListMetadata(sessionId: string): Pick<SessionListItem, "title" | "textBytes"> {
-    const titleRow = this.db.prepare(`
-      SELECT searchable_text FROM events
-      WHERE session_id = ? AND role = 'user' AND trim(searchable_text) <> ''
-      ORDER BY line_number ASC, id ASC LIMIT 1
-    `).get(sessionId) as { searchable_text: string } | undefined;
-    const sizeRow = this.db.prepare("SELECT COALESCE(SUM(length(searchable_text)), 0) AS text_bytes FROM events WHERE session_id = ?").get(sessionId) as { text_bytes: number };
-    return {
-      title: summarizeTitle(titleRow?.searchable_text) ?? sessionId,
-      textBytes: Number(sizeRow.text_bytes)
-    };
-  }
 }
 
 function summarizeTitle(value: string | undefined): string | null {

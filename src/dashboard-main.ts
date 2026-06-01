@@ -132,6 +132,10 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/settings") {
       const body = await readJsonBody(request);
       const current = archiveStore.getSettings();
+      const requestedBackgroundSync = booleanField(body, "backgroundSyncEnabled", current.backgroundSyncEnabled);
+      if (requestedBackgroundSync !== current.backgroundSyncEnabled || requestedBackgroundSync) {
+        await setBackgroundSync(requestedBackgroundSync);
+      }
       const next = archiveStore.updateSettings({
         llmProvider: stringField(body, "llmProvider") || current.llmProvider,
         llmBaseUrl: stringField(body, "llmBaseUrl") || current.llmBaseUrl,
@@ -141,7 +145,7 @@ const server = createServer(async (request, response) => {
         embeddingModel: stringField(body, "embeddingModel") || current.embeddingModel,
         embeddingApiKey: stringField(body, "embeddingApiKey") || current.embeddingApiKey,
         profileMemoryEnabled: booleanField(body, "profileMemoryEnabled", current.profileMemoryEnabled),
-        backgroundSyncEnabled: booleanField(body, "backgroundSyncEnabled", current.backgroundSyncEnabled),
+        backgroundSyncEnabled: requestedBackgroundSync,
         manualModelEntry: booleanField(body, "manualModelEntry", current.manualModelEntry),
         autoTaggingEnabled: booleanField(body, "autoTaggingEnabled", current.autoTaggingEnabled),
         duplicateCleanerEnabled: booleanField(body, "duplicateCleanerEnabled", current.duplicateCleanerEnabled),
@@ -149,9 +153,6 @@ const server = createServer(async (request, response) => {
         contextPackEnabled: booleanField(body, "contextPackEnabled", current.contextPackEnabled),
         healthCheckEnabled: booleanField(body, "healthCheckEnabled", current.healthCheckEnabled)
       });
-      if (next.backgroundSyncEnabled !== current.backgroundSyncEnabled) {
-        await setBackgroundSync(next.backgroundSyncEnabled);
-      }
       return json(response, publicSettings(next));
     }
     if (request.method === "GET" && url.pathname === "/api/health") {

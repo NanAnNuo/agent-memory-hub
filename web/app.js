@@ -610,6 +610,7 @@ function scheduleSettingsSave() {
 
 [
   "profileMemoryEnabled",
+  "backgroundSyncEnabled",
   "autoTaggingEnabled",
   "duplicateCleanerEnabled",
   "retentionReminderEnabled",
