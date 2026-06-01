@@ -1,9 +1,17 @@
 {
   "name": "agent-memory-hub",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Local multi-agent archive, lightweight memory, isolated skills, and conversation export.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NanAnNuo/agent-memory-hub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NanAnNuo/agent-memory-hub/issues"
+  },
+  "homepage": "https://github.com/NanAnNuo/agent-memory-hub#readme",
   "bin": {
     "agent-archive-mcp": "./dist/archive-main.js",
     "agent-orchestrator-mcp": "./dist/orchestrator-main.js",
