@@ -13,6 +13,12 @@ export interface LocalMemorySearchResult {
   degraded: boolean;
 }
 
+interface CandidateQuality {
+  ok: boolean;
+  score: number;
+  reasons: string[];
+}
+
 export async function buildMemoryFromSession(store: ArchiveStore, sessionId: string, options: { useLlm?: boolean } = {}): Promise<{ memory: MemoryItem; candidateCreated: boolean }> {
   const manifest = store.getManifest(sessionId);
   if (!manifest) {
@@ -144,6 +150,10 @@ function titleFromSummary(summary: string, manifest: SessionManifest): string {
 }
 
 function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionManifest, summary: string, transcript: string): boolean {
+  const quality = evaluateCandidateQuality(manifest, summary, transcript);
+  if (!quality.ok) {
+    return false;
+  }
   const readableText = `${summary}\n${transcript}`.toLowerCase();
   const hasReusableSignal = [
     "skill", "workflow", "rule", "pitfall", "经验", "规则", "复用", "工作流", "踩坑", "修复", "调试", "配置", "ui", "测试"
@@ -164,13 +174,91 @@ function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionM
     type: "workflow",
     title,
     lesson: redactSensitive(summary).slice(0, 4000),
-    evidence: [`${manifest.client}:${manifest.sessionId}`, `source:${manifest.sourcePath}`],
+    evidence: [`${manifest.client}:${manifest.sessionId}`, `quality:${quality.score}`, ...quality.reasons.map((reason) => `signal:${reason}`), `source:${manifest.sourcePath}`],
     reuseRule: scenario || `Use when a future task matches this session's problem pattern: ${title}`,
     redactionStatus: "redacted",
     promotionTarget: "skill",
     projectRoot: manifest.project
   });
   return true;
+}
+
+function evaluateCandidateQuality(manifest: SessionManifest, summary: string, transcript: string): CandidateQuality {
+  const text = `${summary}\n${transcript}`;
+  const lowered = text.toLowerCase();
+  const reasons: string[] = [];
+  let score = 0;
+  if (isNoiseSession(manifest, lowered)) {
+    return { ok: false, score: 0, reasons: ["noise-session"] };
+  }
+  const readableLength = transcript.replace(/\s+/g, " ").trim().length;
+  const userTurns = countRoleTurns(transcript, "user");
+  const assistantTurns = countRoleTurns(transcript, "assistant");
+  if (readableLength >= 700 && userTurns >= 1 && assistantTurns >= 2) {
+    score += 2;
+    reasons.push("substantial-dialogue");
+  } else if (readableLength >= 350 && userTurns >= 1 && assistantTurns >= 1) {
+    score += 1;
+    reasons.push("complete-dialogue");
+  }
+  if (matchesAny(lowered, ["bug", "fix", "error", "failed", "regression", "timeout", "修复", "报错", "失败", "异常", "卡死", "回退"])) {
+    score += 2;
+    reasons.push("problem-and-fix");
+  }
+  if (matchesAny(lowered, ["implemented", "changed", "verified", "test passed", "commit", "已完成", "验证", "测试通过", "提交", "定位", "解决"])) {
+    score += 2;
+    reasons.push("verified-outcome");
+  }
+  if (matchesAny(lowered, ["use when", "reuse", "reusable", "rule", "pattern", "workflow", "以后", "复用", "规则", "模式", "工作流", "适用于", "应用场景"])) {
+    score += 2;
+    reasons.push("reusable-scenario");
+  }
+  if (matchesAny(lowered, ["playwright", "sqlite", "mcp", "dashboard", "powershell", "scheduledtask", "lancedb", "api", "typescript", "vitest"])) {
+    score += 1;
+    reasons.push("specific-tooling");
+  }
+  if (hasActionableShape(summary)) {
+    score += 1;
+    reasons.push("structured-summary");
+  }
+  if (isLowValue(lowered)) {
+    score -= 3;
+    reasons.push("low-value-noise");
+  }
+  return { ok: score >= 6, score, reasons };
+}
+
+function isNoiseSession(manifest: SessionManifest, loweredText: string): boolean {
+  const identity = `${manifest.sourcePath}\n${manifest.sourceSessionId ?? ""}\n${loweredText.slice(0, 1200)}`.toLowerCase();
+  return identity.includes("agents.md instructions")
+    || identity.includes("<instructions>")
+    || identity.includes("claude.md")
+    || identity.includes("core communication")
+    || identity.includes("核心通信法则")
+    || identity.includes("user_authorization")
+    || identity.includes("risk_level")
+    || identity.includes("startup rule")
+    || identity.includes("internal startup");
+}
+
+function isLowValue(loweredText: string): boolean {
+  return matchesAny(loweredText, [
+    "who are you", "你是谁", "你还记得", "默认加载提示词", "search the entire c:\\users", "打开浏览器，进入b站"
+  ]);
+}
+
+function hasActionableShape(summary: string): boolean {
+  return /功能[:：]/.test(summary)
+    && /应用场景[:：]/.test(summary)
+    && /经验[:：]/.test(summary);
+}
+
+function countRoleTurns(transcript: string, role: string): number {
+  return (transcript.match(new RegExp(`(^|\\n\\n)${role}:`, "gi")) ?? []).length;
+}
+
+function matchesAny(value: string, tokens: string[]): boolean {
+  return tokens.some((token) => value.includes(token));
 }
 
 function extractRoleText(transcript: string, role: string): string {

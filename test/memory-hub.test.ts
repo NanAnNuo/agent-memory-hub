@@ -43,6 +43,22 @@ describe("Local memory, export, and skill promotion", () => {
     store.close();
   });
 
+  it("does not create skill candidates for low-value prompt or policy noise", async () => {
+    const { sourceRoot, store } = setupStore();
+    const source = join(sourceRoot, "noise.jsonl");
+    writeFileSync(source, [
+      JSON.stringify({ type: "user", sessionId: "noise-session", timestamp: "2026-05-25T00:00:00Z", message: { role: "user", content: "# AGENTS.md instructions for D:\\repo\n<INSTRUCTIONS>\n核心通信法则\nDefault startup rule" } }),
+      JSON.stringify({ type: "assistant", sessionId: "noise-session", timestamp: "2026-05-25T00:00:01Z", message: { role: "assistant", content: "acknowledged" } })
+    ].join("\n"), "utf8");
+    const imported = importJsonlFile("codex", source, sourceRoot);
+    store.ingestSession(imported);
+
+    const result = await buildMemoryFromSession(store, imported.sessionId);
+    expect(result.candidateCreated).toBe(false);
+    expect(store.listSkillCandidates("pending").map((candidate) => candidate.candidateId)).not.toContain(`auto-${imported.sessionId}`);
+    store.close();
+  });
+
   it("backs up and stages restore for archive database and Hub skills", async () => {
     const { sourceRoot, paths, store } = setupStore();
     const source = join(sourceRoot, "backup.jsonl");
