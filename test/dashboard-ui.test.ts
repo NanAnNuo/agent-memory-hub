@@ -93,8 +93,8 @@ describe("dashboard UI flow", () => {
     await waitFor(() => existsSync(join(projectRoot, ".project-skills")) ? "" : "project-clean", 10000);
     await waitFor(() => existsSync(join(paths.skillsDir, "projects")) ? "hub-skill" : "", 10000);
 
-    await page.locator('[data-view="exports"]').click();
-    await page.locator("#exportSessionId").fill(imported.sessionId);
+    await page.locator('[data-view="conversations"]').click();
+    await page.locator("#openExportDialog").click();
     await page.locator("#exportFormat").selectOption("markdown");
     await page.locator("#exportForm button[type='submit']").click();
     await waitFor(async () => {

@@ -18,6 +18,8 @@ let selectedSession = null;
 let currentSessionCursor = 0;
 let currentSessionHasMore = false;
 let sessionRequestSeq = 0;
+let settingsSaveTimer = null;
+let settingsSaving = false;
 const closedProjects = new Set();
 const openProjects = new Set();
 const closedThreads = new Set();
@@ -72,7 +74,9 @@ async function refresh() {
     $("tasks").innerHTML = tasks.map((task) => item(task.title, `${badge(task.agent)}${escapeHtml(task.status)} / ${escapeHtml(time(task.updatedAt))}`, task.modelProfile)).join("") || `<div class="empty">暂无任务</div>`;
     renderCandidates(candidates);
     renderSkills(skills);
-    renderSettings(settings);
+    if (!settingsSaving && !$("settingsForm").contains(document.activeElement)) {
+      renderSettings(settings);
+    }
   } catch (error) {
     $("pulse").classList.add("off");
     $("syncState").textContent = "连接异常";
@@ -206,6 +210,7 @@ async function showSession(sessionId) {
   currentSessionCursor = data.nextOffset;
   currentSessionHasMore = data.hasMore;
   $("exportSessionId").value = sessionId;
+  $("openExportDialog").disabled = false;
   $("resultCount").textContent = `${data.manifest.eventCount} 条事件`;
   $("details").className = "callchain tall";
   $("details").innerHTML = renderSessionHeader(data.manifest) + data.messages.map(renderEvent).join("") + renderLoadMore();
@@ -232,6 +237,7 @@ async function deleteSession(sessionId) {
     $("details").className = "feed tall empty";
     $("details").textContent = "选择会话或搜索关键词";
     $("resultCount").textContent = "待查询";
+    $("openExportDialog").disabled = true;
   }
   renderSessions(await loadSessions());
 }
@@ -281,18 +287,74 @@ function looksLikeToolText(text) {
 
 function renderCandidates(candidates) {
   $("candidateCount").textContent = `${candidates.length} 条`;
-  $("candidates").innerHTML = candidates.map((candidate) => item(
-    candidate.title,
-    `${badge(candidate.scope)}${escapeHtml(candidate.type)} / ${escapeHtml(candidate.promotionTarget)}`,
-    `${candidate.lesson}\n\n${candidate.reuseRule}`,
-    `<button class="mini promote" data-candidate="${escapeHtml(candidate.candidateId)}">批准写入 Hub</button>`
-  )).join("") || `<div class="empty">暂无候选</div>`;
-  document.querySelectorAll("[data-candidate]").forEach((button) => {
+  $("candidates").innerHTML = candidates.map(renderCandidateCard).join("") || `<div class="empty">暂无候选</div>`;
+  document.querySelectorAll("[data-approve-candidate]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api("/api/candidates/promote", { method: "POST", body: JSON.stringify({ candidateId: button.dataset.candidate, approved: true }) });
+      await api("/api/candidates/promote", { method: "POST", body: JSON.stringify({ candidateId: button.dataset.approveCandidate, approved: true }) });
       await refresh();
     });
   });
+  document.querySelectorAll("[data-reject-candidate]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/candidates/${encodeURIComponent(button.dataset.rejectCandidate)}`, { method: "DELETE" });
+      await refresh();
+    });
+  });
+}
+
+function renderCandidateCard(candidate) {
+  const skillFunction = readableSkillFunction(candidate);
+  const scenario = labeledLine(candidate.lesson, "应用场景") || candidate.reuseRule || "用于未来出现相同问题模式、工具链或项目约束时复用。";
+  const lesson = labeledLine(candidate.lesson, "经验") || candidate.lesson;
+  const evidence = (candidate.evidence || []).slice(0, 3).map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
+  return `
+    <article class="candidate-card">
+      <header>
+        <div>
+          <div class="meta">${badge(candidate.scope)}${escapeHtml(candidate.type)} / ${escapeHtml(candidate.promotionTarget)}</div>
+          <h3 title="${escapeHtml(cleanCandidateTitle(candidate.title))}">${escapeHtml(trimText(cleanCandidateTitle(candidate.title), 96))}</h3>
+        </div>
+        <span class="candidate-status">待审核</span>
+      </header>
+      <dl class="candidate-fields">
+        <dt>功能</dt><dd>${escapeHtml(skillFunction)}</dd>
+        <dt>应用场景</dt><dd>${escapeHtml(scenario)}</dd>
+        <dt>沉淀内容</dt><dd>${escapeHtml(trimText(lesson, 520))}</dd>
+        <dt>证据</dt><dd><ul>${evidence || "<li>暂无证据</li>"}</ul></dd>
+      </dl>
+      <div class="candidate-actions">
+        <button class="mini promote" data-candidate="${escapeHtml(candidate.candidateId)}" data-approve-candidate="${escapeHtml(candidate.candidateId)}">批准写入 Hub</button>
+        <button class="mini danger" data-reject-candidate="${escapeHtml(candidate.candidateId)}">不通过并删除</button>
+      </div>
+    </article>`;
+}
+
+function firstSentence(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().split(/[。.!?]\s*/).find(Boolean)?.slice(0, 180) || "";
+}
+
+function labeledLine(value, label) {
+  const line = String(value || "").split(/\r?\n/).find((item) => item.trim().startsWith(`${label}：`) || item.trim().startsWith(`${label}:`));
+  return line ? line.replace(new RegExp(`^${label}[:：]\\s*`), "").trim() : "";
+}
+
+function trimText(value, maxLength) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function cleanCandidateTitle(value) {
+  return String(value || "未命名候选").replace(/^(user|assistant|agent)\s*[:：]\s*/i, "").trim();
+}
+
+function readableSkillFunction(candidate) {
+  const explicit = labeledLine(candidate.lesson, "功能");
+  const raw = explicit || firstSentence(candidate.lesson) || candidate.title;
+  const text = cleanCandidateTitle(raw);
+  if (/AGENTS\.md instructions|<INSTRUCTIONS>|user_authorization|risk_level/i.test(text)) {
+    return `从会话中沉淀“${trimText(cleanCandidateTitle(candidate.title), 48)}”相关的项目级工作流经验。`;
+  }
+  return trimText(text, 180);
 }
 
 function renderSkills(skills) {
@@ -434,6 +496,17 @@ $("exportForm").addEventListener("submit", async (event) => {
   URL.revokeObjectURL(link.href);
 });
 
+$("openExportDialog").addEventListener("click", () => {
+  if (!selectedSessionId) return;
+  $("exportSessionId").value = selectedSessionId;
+  $("exportPreview").textContent = "等待操作";
+  $("exportDialog").showModal();
+});
+
+$("closeExportDialog").addEventListener("click", () => {
+  $("exportDialog").close();
+});
+
 $("contextPack").addEventListener("click", async () => {
   const result = await api("/api/context-pack", { method: "POST", body: JSON.stringify({ sessionId: $("exportSessionId").value }) });
   $("exportPreview").textContent = result.content;
@@ -452,28 +525,59 @@ $("importModels").addEventListener("click", async () => {
 
 $("settingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const manual = $("manualModel").value.trim();
-  const saved = await api("/api/settings", {
-    method: "POST",
-    body: JSON.stringify({
-      llmProvider: "deepseek",
-      llmBaseUrl: $("llmBaseUrl").value,
-      llmApiKey: $("llmApiKey").value,
-      llmModel: manual || $("llmModel").value,
-      embeddingBaseUrl: $("embeddingBaseUrl").value,
-      embeddingModel: $("embeddingModel").value,
-      profileMemoryEnabled: $("profileMemoryEnabled").checked,
-      backgroundSyncEnabled: $("backgroundSyncEnabled").checked,
-      autoTaggingEnabled: $("autoTaggingEnabled").checked,
-      duplicateCleanerEnabled: $("duplicateCleanerEnabled").checked,
-      retentionReminderEnabled: $("retentionReminderEnabled").checked,
-      contextPackEnabled: $("contextPackEnabled").checked,
-      healthCheckEnabled: $("healthCheckEnabled").checked,
-      manualModelEntry: Boolean(manual)
-    })
-  });
-  renderSettings(saved);
+  await saveSettings();
 });
+
+function collectSettingsPayload() {
+  const manual = $("manualModel").value.trim();
+  return {
+    llmProvider: "deepseek",
+    llmBaseUrl: $("llmBaseUrl").value,
+    llmApiKey: $("llmApiKey").value,
+    llmModel: manual || $("llmModel").value,
+    embeddingBaseUrl: $("embeddingBaseUrl").value,
+    embeddingModel: $("embeddingModel").value,
+    profileMemoryEnabled: $("profileMemoryEnabled").checked,
+    backgroundSyncEnabled: $("backgroundSyncEnabled").checked,
+    autoTaggingEnabled: $("autoTaggingEnabled").checked,
+    duplicateCleanerEnabled: $("duplicateCleanerEnabled").checked,
+    retentionReminderEnabled: $("retentionReminderEnabled").checked,
+    contextPackEnabled: $("contextPackEnabled").checked,
+    healthCheckEnabled: $("healthCheckEnabled").checked,
+    manualModelEntry: Boolean(manual)
+  };
+}
+
+async function saveSettings() {
+  settingsSaving = true;
+  try {
+    const saved = await api("/api/settings", {
+    method: "POST",
+    body: JSON.stringify(collectSettingsPayload())
+    });
+    renderSettings(saved);
+  } catch (error) {
+    $("settingsStatus").textContent = error.message;
+  } finally {
+    settingsSaving = false;
+  }
+}
+
+function scheduleSettingsSave() {
+  if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(() => {
+    void saveSettings();
+  }, 200);
+}
+
+[
+  "profileMemoryEnabled",
+  "autoTaggingEnabled",
+  "duplicateCleanerEnabled",
+  "retentionReminderEnabled",
+  "contextPackEnabled",
+  "healthCheckEnabled"
+].forEach((id) => $(id).addEventListener("change", scheduleSettingsSave));
 
 $("testLlm").addEventListener("click", async () => {
   const result = await api("/api/settings/test-llm", { method: "POST", body: JSON.stringify({ llmBaseUrl: $("llmBaseUrl").value, llmApiKey: $("llmApiKey").value, llmModel: $("manualModel").value || $("llmModel").value }) });

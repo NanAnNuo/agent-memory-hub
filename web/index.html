@@ -13,7 +13,6 @@
       <button class="tab" data-view="conversations">会话</button>
       <button class="tab" data-view="memory">记忆</button>
       <button class="tab" data-view="skills">Skills</button>
-      <button class="tab" data-view="exports">导出</button>
       <button class="tab" data-view="settings">设置</button>
     </aside>
     <main class="workspace">
@@ -57,7 +56,16 @@
         </form>
         <div class="split">
           <article class="panel"><header><h2>统一侧栏</h2><span id="sessionCount"></span></header><div id="sessions" class="feed tall"></div></article>
-          <article class="panel"><header><h2>详情 / 命中</h2><span id="resultCount">待查询</span></header><div id="details" class="feed tall empty">选择会话或搜索关键词</div></article>
+          <article class="panel">
+            <header>
+              <h2>详情 / 命中</h2>
+              <div class="header-actions">
+                <span id="resultCount">待查询</span>
+                <button type="button" id="openExportDialog" class="mini" disabled>导出</button>
+              </div>
+            </header>
+            <div id="details" class="feed tall empty">选择会话或搜索关键词</div>
+          </article>
         </div>
       </section>
 
@@ -90,17 +98,6 @@
           <article class="panel"><header><h2>待审核候选</h2><span id="candidateCount"></span></header><div id="candidates" class="feed tall"></div></article>
           <article class="panel"><header><h2>Hub Skills</h2><span id="skillCount"></span></header><div id="hubSkills" class="feed tall"></div></article>
         </div>
-      </section>
-
-      <section id="exports" class="view">
-        <form id="exportForm" class="toolbar">
-          <input id="exportSessionId" placeholder="session_id">
-          <select id="exportFormat"><option value="markdown">Markdown</option><option value="json">JSON</option></select>
-          <button type="submit">导出并下载</button>
-          <button type="button" id="contextPack">生成恢复上下文</button>
-          <button type="button" id="buildMemory">沉淀为记忆</button>
-        </form>
-        <article class="panel"><header><h2>预览</h2></header><pre id="exportPreview" class="preview">等待操作</pre></article>
       </section>
 
       <section id="settings" class="view">
@@ -198,6 +195,25 @@
         <article class="panel settings-status-panel"><header><h2>配置状态</h2></header><pre id="settingsStatus" class="preview">等待加载</pre></article>
       </section>
     </main>
+
+    <dialog id="exportDialog" class="modal">
+      <form id="exportForm" method="dialog" class="modal-card">
+        <header>
+          <h2>导出当前会话</h2>
+          <button type="button" id="closeExportDialog" class="mini">关闭</button>
+        </header>
+        <div class="form-grid">
+          <input id="exportSessionId" readonly placeholder="session_id">
+          <select id="exportFormat"><option value="markdown">Markdown</option><option value="json">JSON</option></select>
+        </div>
+        <div class="button-row">
+          <button type="submit">导出并下载</button>
+          <button type="button" id="contextPack">生成恢复上下文</button>
+          <button type="button" id="buildMemory">沉淀为记忆</button>
+        </div>
+        <pre id="exportPreview" class="preview">等待操作</pre>
+      </form>
+    </dialog>
     <script src="/app.js"></script>
   </body>
 </html>

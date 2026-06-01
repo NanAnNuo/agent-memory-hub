@@ -125,11 +125,21 @@ async function writeEmbeddingRecord(store: ArchiveStore, settings: HubSettings, 
 
 function fallbackSummary(transcript: string): string {
   const normalized = transcript.replace(/\s+/g, " ").trim();
-  return normalized.slice(0, 1800) || "No readable conversation text was available.";
+  if (!normalized) {
+    return "No readable conversation text was available.";
+  }
+  const request = extractRoleText(transcript, "user") || normalized;
+  const answer = extractRoleText(transcript, "assistant") || normalized;
+  return [
+    `功能：${summarizeLine(request, 180)}`,
+    `应用场景：当未来任务涉及相同项目、工具链、实现约束或问题模式时复用。`,
+    `经验：${summarizeLine(answer, 900)}`
+  ].join("\n");
 }
 
 function titleFromSummary(summary: string, manifest: SessionManifest): string {
-  const first = summary.split(/\r?\n/).map((line) => line.replace(/^#+\s*/, "").trim()).find(Boolean);
+  const functionLine = summary.split(/\r?\n/).find((line) => /^功能[:：]/.test(line.trim()));
+  const first = (functionLine || summary).split(/\r?\n/).map((line) => line.replace(/^#+\s*/, "").replace(/^功能[:：]\s*/, "").replace(/^(user|assistant|agent)\s*[:：]\s*/i, "").trim()).find(Boolean);
   return (first || manifest.sourceSessionId || manifest.sessionId).slice(0, 96);
 }
 
@@ -142,6 +152,7 @@ function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionM
     return false;
   }
   const title = titleFromSummary(summary, manifest).replace(/^[-*#\s]+/, "").slice(0, 80) || "Reusable agent workflow";
+  const scenario = summary.split(/\r?\n/).find((line) => /^应用场景[:：]/.test(line.trim()))?.replace(/^应用场景[:：]\s*/, "").trim();
   const candidateId = `auto-${manifest.sessionId}`;
   const existing = store.getSkillCandidate(candidateId);
   if (existing) {
@@ -154,10 +165,20 @@ function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionM
     title,
     lesson: redactSensitive(summary).slice(0, 4000),
     evidence: [`${manifest.client}:${manifest.sessionId}`, `source:${manifest.sourcePath}`],
-    reuseRule: `Use when a future task matches this session's problem pattern: ${title}`,
+    reuseRule: scenario || `Use when a future task matches this session's problem pattern: ${title}`,
     redactionStatus: "redacted",
     promotionTarget: "skill",
     projectRoot: manifest.project
   });
   return true;
+}
+
+function extractRoleText(transcript: string, role: string): string {
+  const match = transcript.match(new RegExp(`${role}:\\s*([\\s\\S]*?)(?:\\n\\n(?:user|assistant|tool|system|developer):|$)`, "i"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function summarizeLine(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
 }

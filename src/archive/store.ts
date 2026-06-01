@@ -522,6 +522,11 @@ export class ArchiveStore {
     return (rows as Array<Record<string, unknown>>).map(mapSkillCandidate);
   }
 
+  deleteSkillCandidate(candidateId: string): { deleted: boolean } {
+    const result = this.db.prepare("DELETE FROM skill_candidates WHERE candidate_id = ? AND status = 'pending'").run(candidateId);
+    return { deleted: result.changes > 0 };
+  }
+
   private isSessionDeleted(sessionId: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM deleted_sessions WHERE session_id = ?").get(sessionId));
   }

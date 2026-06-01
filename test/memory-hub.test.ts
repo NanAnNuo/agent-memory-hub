@@ -147,4 +147,23 @@ describe("Local memory, export, and skill promotion", () => {
     expect(readFileSync(skills.find((skill) => skill.title === "Project only workflow")!.path, "utf8")).toContain("Keep this project-local.");
     store.close();
   });
+
+  it("deletes rejected pending skill candidates", () => {
+    const { store } = setupStore();
+    store.putSkillCandidate({
+      candidateId: "reject-me",
+      scope: "project",
+      type: "workflow",
+      title: "Reject this candidate",
+      lesson: "功能：temporary candidate",
+      evidence: ["unit test"],
+      reuseRule: "应用场景：do not use",
+      redactionStatus: "redacted",
+      promotionTarget: "skill",
+      projectRoot: "D:\\project"
+    });
+    expect(store.deleteSkillCandidate("reject-me")).toEqual({ deleted: true });
+    expect(store.getSkillCandidate("reject-me")).toBeNull();
+    store.close();
+  });
 });

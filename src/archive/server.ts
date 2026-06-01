@@ -263,6 +263,13 @@ export function createArchiveServer(dataDir?: string): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }, async ({ candidate_id, approved }) => toolResult(promoteSkillCandidate(store, paths, candidate_id, approved)));
 
+  server.registerTool("skill_candidate_reject", {
+    title: "Reject Skill Candidate",
+    description: "Delete a pending skill candidate that should not be promoted.",
+    inputSchema: { candidate_id: z.string().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
+  }, async ({ candidate_id }) => toolResult(store.deleteSkillCandidate(candidate_id)));
+
   server.registerTool("hub_skill_list", {
     title: "List Hub Skills",
     description: "List Hub-managed skills without reading Codex/Claude native skill directories.",

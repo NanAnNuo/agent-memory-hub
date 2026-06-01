@@ -123,6 +123,9 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/candidates") {
       return json(response, archiveStore.listSkillCandidates(url.searchParams.get("status") ?? undefined));
     }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/candidates/")) {
+      return json(response, archiveStore.deleteSkillCandidate(decodeURIComponent(url.pathname.slice("/api/candidates/".length))));
+    }
     if (request.method === "GET" && url.pathname === "/api/settings") {
       return json(response, publicSettings(archiveStore.getSettings()));
     }

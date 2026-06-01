@@ -51,6 +51,7 @@ h1 { margin: 0; font-size: 42px; font-weight: 800; letter-spacing: 0; }
 .two-col, .split { display: grid; grid-template-columns: minmax(480px, 1fr) minmax(0, 1.35fr); gap: 18px; }
 .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; min-height: 240px; overflow: hidden; }
 .panel header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.header-actions { display: flex; align-items: center; gap: 10px; }
 h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
 .body, .feed { padding: 14px; }
 .feed.tall, .callchain.tall { height: calc(100vh - 250px); min-height: 620px; overflow: auto; }
@@ -75,6 +76,23 @@ button:hover { border-color: var(--accent); }
 .item strong { display: block; margin: 6px 0; }
 .meta { color: var(--muted); font-size: 12px; }
 .item p { margin: 8px 0 0; white-space: pre-wrap; line-height: 1.5; font-size: 13px; }
+.candidate-card {
+  margin-bottom: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px;
+  background: #17181d; color: var(--text);
+}
+.candidate-card header { display: flex; justify-content: space-between; gap: 14px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+.candidate-card h3 {
+  display: -webkit-box; margin: 8px 0 0; max-height: 48px; overflow: hidden; font-size: 19px; line-height: 1.25;
+  overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.candidate-status { align-self: start; padding: 4px 8px; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); font-size: 12px; }
+.candidate-fields { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px 14px; padding: 12px 0; }
+.candidate-fields dt { color: var(--muted); font-weight: 800; }
+.candidate-fields dd {
+  margin: 0; max-height: 118px; overflow: auto; line-height: 1.55; overflow-wrap: anywhere;
+}
+.candidate-fields ul { margin: 0; padding-left: 18px; }
+.candidate-actions { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
 .badge { display: inline-flex; margin-right: 7px; padding: 2px 7px; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); text-transform: uppercase; font-size: 11px; }
 .badge.codex { color: var(--user); }
 .badge.claude { color: var(--control); }
@@ -246,6 +264,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   display: flex; justify-content: flex-end; gap: 10px; padding: 2px 0 0;
 }
 .settings-status-panel { margin-top: 18px; }
+.modal {
+  width: min(880px, calc(100vw - 36px)); padding: 0; border: 1px solid var(--line2); border-radius: 8px;
+  background: var(--panel); color: var(--text);
+}
+.modal::backdrop { background: rgba(0,0,0,.58); }
+.modal-card header { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.modal-card .preview { max-height: 420px; border-top: 1px solid var(--line); }
 .readiness-list div {
   display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 14px;
   padding: 16px 20px; border-bottom: 1px solid var(--line);
