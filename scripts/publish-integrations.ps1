@@ -13,7 +13,7 @@ $archiveMain = Join-Path $HubRoot 'dist\archive-main.js'
 $orchestratorMain = Join-Path $HubRoot 'dist\orchestrator-main.js'
 $ruleSource = Join-Path $HubRoot 'rules\shared-agent-policy.md'
 $aghub = Join-Path $env:LOCALAPPDATA 'AGHub\bin\aghub-cli.exe'
-$claude = Join-Path $env:LOCALAPPDATA 'Claude-3p\claude-code\2.1.142\claude.exe'
+$claudeDesktopConfig = Join-Path $env:LOCALAPPDATA 'Claude-3p\claude_desktop_config.json'
 $markerStart = '<!-- agent-collaboration-hub:start -->'
 $markerEnd = '<!-- agent-collaboration-hub:end -->'
 
@@ -48,6 +48,40 @@ function Publish-AghubMcp {
         }
     }
     $ErrorActionPreference = $previousPreference
+}
+
+function Register-ClaudeDesktopMcp {
+    param(
+        [string]$ConfigPath,
+        [string]$NodePath,
+        [string]$ArchiveEntry,
+        [string]$OrchestratorEntry,
+        [string]$DataDirectory
+    )
+    $directory = Split-Path -Parent $ConfigPath
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    if (Test-Path -LiteralPath $ConfigPath) {
+        Copy-Item -LiteralPath $ConfigPath -Destination "$ConfigPath.bak-agent-memory-hub-$(Get-Date -Format 'yyyyMMdd-HHmmss')" -Force
+        $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        $config = [pscustomobject]@{}
+    }
+    if (-not $config.PSObject.Properties['mcpServers']) {
+        $config | Add-Member -NotePropertyName 'mcpServers' -NotePropertyValue ([pscustomobject]@{})
+    }
+    $archiveServer = [ordered]@{
+        command = $NodePath
+        args = @($ArchiveEntry)
+        env = [ordered]@{ AGENT_HUB_DATA_DIR = $DataDirectory }
+    }
+    $orchestratorServer = [ordered]@{
+        command = $NodePath
+        args = @($OrchestratorEntry)
+        env = [ordered]@{ AGENT_HUB_DATA_DIR = $DataDirectory }
+    }
+    $config.mcpServers | Add-Member -Force -NotePropertyName 'agent-archive' -NotePropertyValue $archiveServer
+    $config.mcpServers | Add-Member -Force -NotePropertyName 'agent-orchestrator' -NotePropertyValue $orchestratorServer
+    $config | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
 }
 
 if ($ApplyRules) {
@@ -86,22 +120,31 @@ if ($RegisterMcp) {
     if (-not $AllowExistingCredentialUse) {
         throw 'MCP publication uses existing authenticated client contexts. Re-run with -AllowExistingCredentialUse after explicitly accepting that behavior.'
     }
-    foreach ($path in @($archiveMain, $orchestratorMain, $aghub, $claude)) {
+    foreach ($path in @($archiveMain, $orchestratorMain)) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required executable or build output missing: $path" }
     }
-    $archiveCommand = "node `"$archiveMain`""
-    $orchestratorCommand = "node `"$orchestratorMain`""
+    $node = (Get-Command node -ErrorAction Stop).Source
+    $archiveCommand = "`"$node`" `"$archiveMain`""
+    $orchestratorCommand = "`"$node`" `"$orchestratorMain`""
 
-    & codex mcp remove agent-archive 2>$null | Out-Null
-    & codex mcp remove agent-orchestrator 2>$null | Out-Null
-    & codex mcp add --env "AGENT_HUB_DATA_DIR=$DataRoot" agent-archive -- node $archiveMain | Out-Null
-    & codex mcp add --env "AGENT_HUB_DATA_DIR=$DataRoot" agent-orchestrator -- node $orchestratorMain | Out-Null
+    if (Get-Command codex -ErrorAction SilentlyContinue) {
+        & codex mcp remove agent-archive 2>$null | Out-Null
+        & codex mcp remove agent-orchestrator 2>$null | Out-Null
+        & codex mcp add --env "AGENT_HUB_DATA_DIR=$DataRoot" agent-archive -- $node $archiveMain | Out-Null
+        & codex mcp add --env "AGENT_HUB_DATA_DIR=$DataRoot" agent-orchestrator -- $node $orchestratorMain | Out-Null
+    } else {
+        Write-Warning 'Codex CLI is not available; skipped native Codex MCP registration.'
+    }
 
-    Publish-AghubMcp -Agent claude -Name agent-archive -Command $archiveCommand
-    Publish-AghubMcp -Agent claude -Name agent-orchestrator -Command $orchestratorCommand
-    Publish-AghubMcp -Agent opencode -Name agent-archive -Command $archiveCommand
-    Publish-AghubMcp -Agent opencode -Name agent-orchestrator -Command $orchestratorCommand
-    Write-Output 'Registered MCP services: Codex natively, Claude/OpenCode through AGHub.'
+    Register-ClaudeDesktopMcp -ConfigPath $claudeDesktopConfig -NodePath $node -ArchiveEntry $archiveMain -OrchestratorEntry $orchestratorMain -DataDirectory $DataRoot
+
+    if (Test-Path -LiteralPath $aghub) {
+        Publish-AghubMcp -Agent opencode -Name agent-archive -Command $archiveCommand
+        Publish-AghubMcp -Agent opencode -Name agent-orchestrator -Command $orchestratorCommand
+    } else {
+        Write-Warning 'AGHub CLI is missing; skipped OpenCode MCP publication.'
+    }
+    Write-Output 'Registered MCP services for available clients and Claude Desktop.'
 }
 
 if (-not $ApplyRules -and -not $PublishPortableSkills -and -not $RegisterMcp) {
