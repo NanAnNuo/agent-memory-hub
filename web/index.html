@@ -104,24 +104,80 @@
       </section>
 
       <section id="settings" class="view">
-        <form id="settingsForm" class="panel form-panel">
-          <header><h2>DeepSeek / OpenAI-compatible 配置</h2><button type="button" id="importModels">导入模型</button></header>
-          <div class="form-grid">
-            <input id="llmBaseUrl" placeholder="base_url，例如 https://api.deepseek.com">
-            <input id="llmApiKey" placeholder="API key，留空表示不修改">
-            <select id="llmModel"></select>
-            <input id="manualModel" placeholder="手动模型名（导入失败时使用）">
-            <input id="embeddingBaseUrl" placeholder="embedding base_url，可选">
-            <input id="embeddingModel" placeholder="embedding model，可选">
-            <label class="check"><input id="profileMemoryEnabled" type="checkbox"> 启用用户画像记忆</label>
-            <label class="check"><input id="backgroundSyncEnabled" type="checkbox"> 开机启动同步服务</label>
-          </div>
-          <div class="button-row">
-            <button type="submit">保存配置</button>
-            <button type="button" id="testLlm">测试连接</button>
-          </div>
-        </form>
-        <article class="panel"><header><h2>配置状态</h2></header><pre id="settingsStatus" class="preview">等待加载</pre></article>
+        <div class="settings-shell">
+          <aside class="settings-nav">
+            <div class="settings-profile">
+              <strong>Agent Memory Hub</strong>
+              <small>Local memory service</small>
+            </div>
+            <a href="#llm-settings">模型配置</a>
+            <a href="#memory-settings">记忆与同步</a>
+            <a href="#feature-settings">实用功能</a>
+            <a href="#readiness-settings">完善度检查</a>
+          </aside>
+          <form id="settingsForm" class="settings-content">
+            <section id="llm-settings" class="settings-card">
+              <header>
+                <div><h2>模型配置</h2><p>DeepSeek / OpenAI-compatible，用于摘要压缩和经验提炼。</p></div>
+                <button type="button" id="importModels">导入模型</button>
+              </header>
+              <div class="setting-row">
+                <div><strong>Base URL</strong><small>例如 https://api.deepseek.com</small></div>
+                <input id="llmBaseUrl" placeholder="https://api.deepseek.com">
+              </div>
+              <div class="setting-row">
+                <div><strong>API Key</strong><small>留空表示不修改现有密钥。</small></div>
+                <input id="llmApiKey" placeholder="sk-...">
+              </div>
+              <div class="setting-row">
+                <div><strong>模型</strong><small>优先从 base URL 导入后选择。</small></div>
+                <select id="llmModel"></select>
+              </div>
+              <div class="setting-row">
+                <div><strong>手动模型名</strong><small>模型列表不可用时作为高级兜底。</small></div>
+                <input id="manualModel" placeholder="deepseek-chat">
+              </div>
+            </section>
+
+            <section id="memory-settings" class="settings-card">
+              <header><div><h2>记忆与同步</h2><p>控制本地长期记忆、画像和后台归档。</p></div></header>
+              <div class="setting-row">
+                <div><strong>Embedding Base URL</strong><small>未配置时自动降级为 SQLite FTS 搜索。</small></div>
+                <input id="embeddingBaseUrl" placeholder="可选">
+              </div>
+              <div class="setting-row">
+                <div><strong>Embedding Model</strong><small>用于 LanceDB 语义检索。</small></div>
+                <input id="embeddingModel" placeholder="可选">
+              </div>
+              <label class="setting-row switch-row"><span><strong>用户画像记忆</strong><small>默认关闭，开启后才沉淀长期偏好。</small></span><input id="profileMemoryEnabled" type="checkbox"></label>
+              <label class="setting-row switch-row"><span><strong>开机启动同步服务</strong><small>后台自动归档新会话，仍不自动发布 skill。</small></span><input id="backgroundSyncEnabled" type="checkbox"></label>
+            </section>
+
+            <section id="feature-settings" class="settings-card">
+              <header><div><h2>可选实用功能</h2><p>适合加入本项目的低风险增强，可逐步启用。</p></div></header>
+              <label class="setting-row switch-row"><span><strong>自动项目标签</strong><small>按路径、agent、关键词给会话打标签，方便侧栏过滤。</small></span><input id="autoTaggingEnabled" type="checkbox"></label>
+              <label class="setting-row switch-row"><span><strong>重复会话清理</strong><small>识别重复导入或重复摘要，减少记忆污染。</small></span><input id="duplicateCleanerEnabled" type="checkbox"></label>
+              <label class="setting-row switch-row"><span><strong>保留策略提醒</strong><small>提示大体积会话、长期未用项目和可归档数据。</small></span><input id="retentionReminderEnabled" type="checkbox"></label>
+              <label class="setting-row switch-row"><span><strong>恢复上下文包</strong><small>为被删除的原生会话生成可复制 continuation 包。</small></span><input id="contextPackEnabled" type="checkbox"></label>
+              <label class="setting-row switch-row"><span><strong>健康检查</strong><small>检测 MCP、同步服务、模型配置和数据目录状态。</small></span><input id="healthCheckEnabled" type="checkbox"></label>
+            </section>
+
+            <section id="readiness-settings" class="settings-card">
+              <header><div><h2>未完善项评估</h2><p>当前项目的必须功能完成度。</p></div></header>
+              <div class="readiness-list">
+                <div><strong>已完成</strong><span>统一侧栏、Hub skill 隔离、基础同步、导出、恢复上下文、模型配置入口。</span></div>
+                <div><strong>需完善</strong><span>真正的 LanceDB embedding 写入、开机同步服务安装/卸载、自动候选生成质量评估。</span></div>
+                <div><strong>必须补齐</strong><span>数据备份/恢复、MCP 启动时自动注入相关 Hub skill、设置项对应后台任务。</span></div>
+              </div>
+            </section>
+
+            <div class="settings-actions">
+              <button type="submit">保存配置</button>
+              <button type="button" id="testLlm">测试连接</button>
+            </div>
+          </form>
+        </div>
+        <article class="panel settings-status-panel"><header><h2>配置状态</h2></header><pre id="settingsStatus" class="preview">等待加载</pre></article>
       </section>
     </main>
     <script src="/app.js"></script>

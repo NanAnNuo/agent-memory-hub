@@ -382,7 +382,12 @@ export class ArchiveStore {
       embeddingApiKey: values.embeddingApiKey ?? process.env.AGENT_HUB_EMBEDDING_API_KEY ?? "",
       profileMemoryEnabled: values.profileMemoryEnabled === "true",
       backgroundSyncEnabled: values.backgroundSyncEnabled === "true",
-      manualModelEntry: values.manualModelEntry === "true"
+      manualModelEntry: values.manualModelEntry === "true",
+      autoTaggingEnabled: values.autoTaggingEnabled === "true",
+      duplicateCleanerEnabled: values.duplicateCleanerEnabled === "true",
+      retentionReminderEnabled: values.retentionReminderEnabled === "true",
+      contextPackEnabled: values.contextPackEnabled !== "false",
+      healthCheckEnabled: values.healthCheckEnabled !== "false"
     };
   }
 

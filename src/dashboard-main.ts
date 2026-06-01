@@ -136,7 +136,12 @@ const server = createServer(async (request, response) => {
         embeddingApiKey: stringField(body, "embeddingApiKey") || current.embeddingApiKey,
         profileMemoryEnabled: booleanField(body, "profileMemoryEnabled", current.profileMemoryEnabled),
         backgroundSyncEnabled: booleanField(body, "backgroundSyncEnabled", current.backgroundSyncEnabled),
-        manualModelEntry: booleanField(body, "manualModelEntry", current.manualModelEntry)
+        manualModelEntry: booleanField(body, "manualModelEntry", current.manualModelEntry),
+        autoTaggingEnabled: booleanField(body, "autoTaggingEnabled", current.autoTaggingEnabled),
+        duplicateCleanerEnabled: booleanField(body, "duplicateCleanerEnabled", current.duplicateCleanerEnabled),
+        retentionReminderEnabled: booleanField(body, "retentionReminderEnabled", current.retentionReminderEnabled),
+        contextPackEnabled: booleanField(body, "contextPackEnabled", current.contextPackEnabled),
+        healthCheckEnabled: booleanField(body, "healthCheckEnabled", current.healthCheckEnabled)
       });
       return json(response, publicSettings(next));
     }

@@ -129,6 +129,11 @@ export interface HubSettings {
   profileMemoryEnabled: boolean;
   backgroundSyncEnabled: boolean;
   manualModelEntry: boolean;
+  autoTaggingEnabled: boolean;
+  duplicateCleanerEnabled: boolean;
+  retentionReminderEnabled: boolean;
+  contextPackEnabled: boolean;
+  healthCheckEnabled: boolean;
 }
 
 export interface SkillCandidate {

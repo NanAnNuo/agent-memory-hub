@@ -4,9 +4,11 @@ const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, (char) => ({
 }[char]));
 const time = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--";
 
-const hashToken = new URLSearchParams(location.hash.replace(/^#/, "")).get("token");
-if (hashToken) {
-  sessionStorage.setItem("agentMemoryHubToken", hashToken);
+const pageParams = new URLSearchParams(location.search);
+const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+const pageToken = hashParams.get("token") || pageParams.get("token");
+if (pageToken) {
+  sessionStorage.setItem("agentMemoryHubToken", pageToken);
   history.replaceState(null, "", location.pathname);
 }
 const dashboardToken = sessionStorage.getItem("agentMemoryHubToken");
@@ -124,16 +126,16 @@ function renderThread(thread) {
 
 function renderSessionLeaf(session, kind) {
   const active = selectedSessionId === session.sessionId ? " active" : "";
+  const title = session.title || session.sourceSessionId || session.sessionId;
   return `
     <button class="session-row ${kind}${active}" data-session="${escapeHtml(session.sessionId)}">
       <span class="session-dot"></span>
       <span class="session-copy">
-        <strong>${escapeHtml(session.title || session.sourceSessionId || session.sessionId)}</strong>
+        <strong title="${escapeHtml(title)}">${escapeHtml(title)}</strong>
+        <span class="session-inline-meta">${badge(session.client)}<span>${escapeHtml(time(session.lastTimestamp))}</span></span>
         <small>${relativeTime(session.lastTimestamp)} · 0 个子线程 · ${formatBytes(session.textBytes || 0)}</small>
       </span>
-      <span class="session-meta">${badge(session.client)}</span>
       <span class="session-actions">
-        <span class="session-time">${escapeHtml(time(session.lastTimestamp))}</span>
         <span class="delete-session" data-delete-session="${escapeHtml(session.sessionId)}" title="删除对话">删除</span>
       </span>
     </button>`;
@@ -290,6 +292,11 @@ function renderSettings(settings) {
   $("embeddingModel").value = settings.embeddingModel || "";
   $("profileMemoryEnabled").checked = Boolean(settings.profileMemoryEnabled);
   $("backgroundSyncEnabled").checked = Boolean(settings.backgroundSyncEnabled);
+  $("autoTaggingEnabled").checked = Boolean(settings.autoTaggingEnabled);
+  $("duplicateCleanerEnabled").checked = Boolean(settings.duplicateCleanerEnabled);
+  $("retentionReminderEnabled").checked = Boolean(settings.retentionReminderEnabled);
+  $("contextPackEnabled").checked = Boolean(settings.contextPackEnabled);
+  $("healthCheckEnabled").checked = Boolean(settings.healthCheckEnabled);
   $("settingsStatus").textContent = JSON.stringify({ ...settings, llmApiKey: settings.llmApiKey ? "[masked]" : "", embeddingApiKey: settings.embeddingApiKey ? "[masked]" : "" }, null, 2);
 }
 
@@ -428,6 +435,11 @@ $("settingsForm").addEventListener("submit", async (event) => {
       embeddingModel: $("embeddingModel").value,
       profileMemoryEnabled: $("profileMemoryEnabled").checked,
       backgroundSyncEnabled: $("backgroundSyncEnabled").checked,
+      autoTaggingEnabled: $("autoTaggingEnabled").checked,
+      duplicateCleanerEnabled: $("duplicateCleanerEnabled").checked,
+      retentionReminderEnabled: $("retentionReminderEnabled").checked,
+      contextPackEnabled: $("contextPackEnabled").checked,
+      healthCheckEnabled: $("healthCheckEnabled").checked,
       manualModelEntry: Boolean(manual)
     })
   });
