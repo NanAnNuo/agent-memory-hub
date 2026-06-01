@@ -8,7 +8,7 @@ import { ArchiveStore } from "../src/archive/store.js";
 import { exportSession } from "../src/archive/export.js";
 import { applyPendingRestore, createBackup, stageRestore } from "../src/archive/backup.js";
 import { promoteSkillCandidate } from "../src/skills/promotion.js";
-import { buildMemoryFromSession, searchLocalMemory } from "../src/memory/local.js";
+import { buildMemoryFromSession, prunePendingSkillCandidates, searchLocalMemory } from "../src/memory/local.js";
 
 afterEach(() => {
   delete process.env.AGENT_HUB_SKILLS_DIR;
@@ -180,6 +180,42 @@ describe("Local memory, export, and skill promotion", () => {
     });
     expect(store.deleteSkillCandidate("reject-me")).toEqual({ deleted: true });
     expect(store.getSkillCandidate("reject-me")).toBeNull();
+    store.close();
+  });
+
+  it("prunes existing low-value pending skill candidates with the quality gate", () => {
+    const { store } = setupStore();
+    store.putSkillCandidate({
+      candidateId: "old-noise",
+      scope: "global",
+      type: "workflow",
+      title: "AGENTS.md instructions for D:\\repo",
+      lesson: "# AGENTS.md instructions\n<INSTRUCTIONS>\nDefault startup rule",
+      evidence: ["unit test"],
+      reuseRule: "Use when startup rule repeats.",
+      redactionStatus: "redacted",
+      promotionTarget: "skill",
+      projectRoot: null
+    });
+    store.putSkillCandidate({
+      candidateId: "old-useful",
+      scope: "project",
+      type: "workflow",
+      title: "Dashboard timeout fix workflow",
+      lesson: "åŠŸèƒ½ï¼šFix dashboard session-list timeout by replacing per-row scans with SQL aggregation.\nåº”ç”¨åœºæ™¯ï¼šUse when a TypeScript dashboard backed by SQLite times out while listing sessions.\nç»éªŒï¼šLocate the slow endpoint, replace repeated message scans with a single aggregate query, add indexes, verify with tests, and commit the fix.",
+      evidence: ["quality:8", "signal:problem-and-fix", "signal:verified-outcome"],
+      reuseRule: "Use when a future SQLite dashboard list endpoint regresses or times out.",
+      redactionStatus: "redacted",
+      promotionTarget: "skill",
+      projectRoot: "D:\\project"
+    });
+
+    const result = prunePendingSkillCandidates(store);
+
+    expect(result.deleted).toBe(1);
+    expect(result.removed.map((item) => item.candidateId)).toEqual(["old-noise"]);
+    expect(store.getSkillCandidate("old-noise")).toBeNull();
+    expect(store.getSkillCandidate("old-useful")).not.toBeNull();
     store.close();
   });
 });

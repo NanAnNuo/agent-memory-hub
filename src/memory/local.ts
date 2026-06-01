@@ -1,5 +1,5 @@
 import type { ArchiveStore } from "../archive/store.js";
-import type { HubSettings, MemoryItem, SessionManifest } from "../archive/types.js";
+import type { HubSettings, MemoryItem, SessionManifest, SkillCandidate } from "../archive/types.js";
 import { readableConversationEvents } from "../archive/readable.js";
 import { redactSensitive } from "../shared/redact.js";
 import { existsSync, mkdirSync } from "node:fs";
@@ -13,10 +13,17 @@ export interface LocalMemorySearchResult {
   degraded: boolean;
 }
 
-interface CandidateQuality {
+export interface CandidateQuality {
   ok: boolean;
   score: number;
   reasons: string[];
+}
+
+export interface SkillCandidatePruneResult {
+  checked: number;
+  deleted: number;
+  kept: number;
+  removed: Array<{ candidateId: string; title: string; score: number; reasons: string[] }>;
 }
 
 export async function buildMemoryFromSession(store: ArchiveStore, sessionId: string, options: { useLlm?: boolean } = {}): Promise<{ memory: MemoryItem; candidateCreated: boolean }> {
@@ -183,7 +190,53 @@ function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionM
   return true;
 }
 
-function evaluateCandidateQuality(manifest: SessionManifest, summary: string, transcript: string): CandidateQuality {
+export function evaluateSkillCandidateQuality(store: ArchiveStore, candidate: SkillCandidate): CandidateQuality {
+  const sessionId = sessionIdFromCandidate(candidate);
+  const manifest = sessionId ? store.getManifest(sessionId) : null;
+  const transcript = manifest
+    ? readableConversationEvents(store.getMessages(manifest.sessionId, 0, Math.min(manifest.eventCount, 120))).map((event) => `${event.role ?? event.eventType}: ${event.searchableText}`).join("\n\n")
+    : candidate.lesson;
+  const syntheticManifest = manifest ?? {
+    sessionId: sessionId ?? candidate.candidateId,
+    sourceSessionId: sessionId,
+    client: "codex" as const,
+    sourcePath: candidate.evidence.find((item) => item.startsWith("source:"))?.slice("source:".length) ?? "",
+    project: candidate.projectRoot,
+    fileSha256: "",
+    eventCount: 0,
+    firstTimestamp: null,
+    lastTimestamp: null,
+    ingestedAt: candidate.createdAt
+  };
+  return evaluateCandidateQuality(syntheticManifest, `${candidate.title}\n${candidate.lesson}\n${candidate.reuseRule}`, transcript);
+}
+
+export function prunePendingSkillCandidates(store: ArchiveStore): SkillCandidatePruneResult {
+  const candidates = store.listSkillCandidates("pending");
+  const removed: SkillCandidatePruneResult["removed"] = [];
+  for (const candidate of candidates) {
+    const quality = evaluateSkillCandidateQuality(store, candidate);
+    if (quality.ok) {
+      continue;
+    }
+    if (store.deleteSkillCandidate(candidate.candidateId).deleted) {
+      removed.push({
+        candidateId: candidate.candidateId,
+        title: candidate.title,
+        score: quality.score,
+        reasons: quality.reasons
+      });
+    }
+  }
+  return {
+    checked: candidates.length,
+    deleted: removed.length,
+    kept: candidates.length - removed.length,
+    removed
+  };
+}
+
+export function evaluateCandidateQuality(manifest: SessionManifest, summary: string, transcript: string): CandidateQuality {
   const text = `${summary}\n${transcript}`;
   const lowered = text.toLowerCase();
   const reasons: string[] = [];
@@ -259,6 +312,14 @@ function countRoleTurns(transcript: string, role: string): number {
 
 function matchesAny(value: string, tokens: string[]): boolean {
   return tokens.some((token) => value.includes(token));
+}
+
+function sessionIdFromCandidate(candidate: SkillCandidate): string | null {
+  if (candidate.candidateId.startsWith("auto-")) {
+    return candidate.candidateId.slice("auto-".length);
+  }
+  const source = candidate.evidence.find((item) => /^(codex|claude|opencode):/.test(item));
+  return source ? source.slice(source.indexOf(":") + 1) : null;
 }
 
 function extractRoleText(transcript: string, role: string): string {

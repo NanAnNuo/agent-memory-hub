@@ -6,11 +6,12 @@ import { ensureHubDirectories, getHubPaths } from "./shared/config.js";
 import { exportSession } from "./archive/export.js";
 import { findJsonlFiles, importJsonlFile, importOpenCodeDatabase } from "./archive/importers.js";
 import { ArchiveStore } from "./archive/store.js";
+import { prunePendingSkillCandidates } from "./memory/local.js";
 import type { ClientKind } from "./archive/types.js";
 
 const command = process.argv[2];
-if (!["ingest", "export"].includes(command ?? "")) {
-  process.stderr.write("Usage: agent-memory-hub ingest [--opencode-root PATH] [--opencode-db PATH]\n       agent-memory-hub export --session-id ID --format markdown|json [--output PATH]\n");
+if (!["ingest", "export", "prune-skills"].includes(command ?? "")) {
+  process.stderr.write("Usage: agent-memory-hub ingest [--opencode-root PATH] [--opencode-db PATH]\n       agent-memory-hub export --session-id ID --format markdown|json [--output PATH]\n       agent-memory-hub prune-skills\n");
   process.exitCode = 1;
 } else if (command === "ingest") {
   const paths = getHubPaths();
@@ -64,6 +65,13 @@ if (!["ingest", "export"].includes(command ?? "")) {
     process.stdout.write(`${JSON.stringify({ filename: result.filename, path: result.path, content: result.path ? undefined : result.content }, null, 2)}\n`);
   }
   store.close();
+} else if (command === "prune-skills") {
+  const paths = getHubPaths();
+  ensureHubDirectories(paths);
+  const store = new ArchiveStore(paths);
+  const result = prunePendingSkillCandidates(store);
+  store.close();
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 function optionValue(name: string): string | null {
