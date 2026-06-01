@@ -113,6 +113,7 @@
             <a href="#llm-settings">模型配置</a>
             <a href="#memory-settings">记忆与同步</a>
             <a href="#feature-settings">实用功能</a>
+            <a href="#backup-settings">备份恢复</a>
             <a href="#readiness-settings">完善度检查</a>
           </aside>
           <form id="settingsForm" class="settings-content">
@@ -162,12 +163,29 @@
               <label class="setting-row switch-row"><span><strong>健康检查</strong><small>检测 MCP、同步服务、模型配置和数据目录状态。</small></span><input id="healthCheckEnabled" type="checkbox"></label>
             </section>
 
+            <section id="backup-settings" class="settings-card">
+              <header><div><h2>备份与恢复</h2><p>备份 archive.db 和 Hub skill。恢复会先暂存，重启 Hub 后生效。</p></div></header>
+              <div class="setting-row">
+                <div><strong>备份目录</strong><small>留空则写入默认 backups 目录。</small></div>
+                <input id="backupOutputPath" placeholder="可选，例如 D:\backup\memory-hub">
+              </div>
+              <div class="setting-row">
+                <div><strong>恢复来源</strong><small>选择包含 archive.db 和 skills 的备份目录。</small></div>
+                <input id="restoreBackupPath" placeholder="备份目录路径">
+              </div>
+              <div class="button-row">
+                <button type="button" id="createBackup">创建备份</button>
+                <button type="button" id="restoreBackup">暂存恢复</button>
+                <button type="button" id="runHealthCheck">运行健康检查</button>
+              </div>
+            </section>
+
             <section id="readiness-settings" class="settings-card">
               <header><div><h2>未完善项评估</h2><p>当前项目的必须功能完成度。</p></div></header>
               <div class="readiness-list">
-                <div><strong>已完成</strong><span>统一侧栏、Hub skill 隔离、基础同步、导出、恢复上下文、模型配置入口。</span></div>
-                <div><strong>需完善</strong><span>真正的 LanceDB embedding 写入、开机同步服务安装/卸载、自动候选生成质量评估。</span></div>
-                <div><strong>必须补齐</strong><span>数据备份/恢复、MCP 启动时自动注入相关 Hub skill、设置项对应后台任务。</span></div>
+                <div><strong>已完成</strong><span>统一侧栏、Hub skill 隔离、基础同步、导出、恢复上下文、模型配置、LanceDB 向量写入、备份/恢复、MCP skill 上下文包、设置驱动后台同步。</span></div>
+                <div><strong>可增强</strong><span>候选质量评分、批量清理策略、打包体积优化、更多 agent 数据源适配。</span></div>
+                <div><strong>必须补齐</strong><span>暂无阻断使用的必须项；未配置 embedding 时会自动降级为 SQLite FTS。</span></div>
               </div>
             </section>
 

@@ -6,6 +6,7 @@ import { getHubPaths, ensureHubDirectories } from "../src/shared/config.js";
 import { importJsonlFile } from "../src/archive/importers.js";
 import { ArchiveStore } from "../src/archive/store.js";
 import { exportSession } from "../src/archive/export.js";
+import { applyPendingRestore, createBackup, stageRestore } from "../src/archive/backup.js";
 import { promoteSkillCandidate } from "../src/skills/promotion.js";
 import { buildMemoryFromSession, searchLocalMemory } from "../src/memory/local.js";
 
@@ -28,7 +29,7 @@ describe("Local memory, export, and skill promotion", () => {
     const source = join(sourceRoot, "session.jsonl");
     writeFileSync(source, [
       JSON.stringify({ type: "system", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", content: "internal startup rule" }),
-      JSON.stringify({ type: "user", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", message: { role: "user", content: "remember this workflow" } }),
+      JSON.stringify({ type: "user", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", message: { role: "user", content: "remember this workflow because it is a reusable debugging rule for future dashboard fixes" } }),
       JSON.stringify({ type: "assistant", sessionId: "s-1", timestamp: "2026-05-25T00:00:00Z", message: { role: "assistant", content: "[call shell_command]" } }),
       JSON.stringify({ type: "assistant", sessionId: "s-1", timestamp: "2026-05-25T00:00:01Z", message: { role: "assistant", content: "done" } })
     ].join("\n"), "utf8");
@@ -38,7 +39,23 @@ describe("Local memory, export, and skill promotion", () => {
     await buildMemoryFromSession(store, imported.sessionId);
     const result = searchLocalMemory(store, "workflow", undefined, ["case"], 5);
     expect(result.cases[0]).toMatchObject({ sessionId: imported.sessionId, type: "case" });
+    expect(store.listSkillCandidates("pending").map((candidate) => candidate.candidateId)).toContain(`auto-${imported.sessionId}`);
     store.close();
+  });
+
+  it("backs up and stages restore for archive database and Hub skills", async () => {
+    const { sourceRoot, paths, store } = setupStore();
+    const source = join(sourceRoot, "backup.jsonl");
+    writeFileSync(source, JSON.stringify({ type: "user", sessionId: "backup-session", message: { role: "user", content: "backup this workflow" } }), "utf8");
+    const imported = importJsonlFile("codex", source, sourceRoot);
+    store.ingestSession(imported);
+    const backup = await createBackup(store, paths);
+    expect(existsSync(join(backup.path, "archive.db"))).toBe(true);
+    expect(existsSync(join(backup.path, "skills"))).toBe(true);
+    const staged = stageRestore(paths, backup.path);
+    expect(staged.restartRequired).toBe(true);
+    store.close();
+    expect(applyPendingRestore(paths)).toBe(true);
   });
 
   it("exports redacted Markdown and JSON without raw sensitive payloads", () => {

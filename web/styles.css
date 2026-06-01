@@ -161,11 +161,22 @@ details[open] > summary .tree-caret { transform: rotate(90deg); }
 .chain-card header strong { font-size: 13px; }
 .chain-card header small { color: #697181; font-size: 12px; }
 .chain-card pre { margin: 0; padding: 12px; color: #15171d; font: 13px/1.55 "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.chain-event.user .chain-card { margin-left: auto; width: min(860px, 92%); border-color: rgba(14,165,233,.32); background: #eef9ff; }
-.chain-event.assistant .chain-card { width: min(980px, 96%); border-color: rgba(34,197,94,.30); }
+.chain-event.user .chain-card {
+  margin-left: auto; width: min(860px, 92%); border-color: rgba(14,165,233,.42);
+  background: #dff4ff; border-radius: 18px 18px 4px 18px;
+}
+.chain-event.assistant .chain-card {
+  width: min(980px, 96%); border-color: rgba(34,197,94,.38);
+  background: #eafff1; border-radius: 18px 18px 18px 4px;
+}
+.chain-event.user .chain-card header { background: rgba(14,165,233,.08); border-bottom-color: rgba(14,165,233,.18); }
+.chain-event.assistant .chain-card header { background: rgba(34,197,94,.08); border-bottom-color: rgba(34,197,94,.18); }
 .chain-event.tool .chain-card { border-color: rgba(245,158,11,.35); background: #fff8ea; }
 .chain-event.control .chain-card { border-color: rgba(239,93,168,.32); background: #fff1f8; }
 .chain-event.event .chain-card { border-style: dashed; background: #fbfcff; }
+.chain-event.tool .chain-card, .chain-event.control .chain-card, .chain-event.event .chain-card {
+  width: min(820px, 88%); opacity: .92; border-radius: 8px;
+}
 .chain-event.user .chain-rail span { background: var(--user); }
 .chain-event.assistant .chain-rail span { background: var(--agent); }
 .chain-event.tool .chain-rail span { background: var(--tool); }

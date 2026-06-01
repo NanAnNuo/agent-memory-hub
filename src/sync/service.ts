@@ -5,6 +5,7 @@ import { getAllowedOpenCodeDatabases, getAllowedTranscriptRoots } from "../share
 import { findJsonlFilesAsync, importJsonlFile, importOpenCodeDatabase } from "../archive/importers.js";
 import { ArchiveStore } from "../archive/store.js";
 import type { ClientKind } from "../archive/types.js";
+import { buildMemoryFromSession } from "../memory/local.js";
 
 export interface SyncStatus {
   startedAt: string;
@@ -125,7 +126,7 @@ export class LiveSyncService {
         }
       }
       this.ingestOpenCodeDatabases();
-      this.syncLocalMemoryState();
+      await this.syncLocalMemoryState();
       this.status.lastSyncAt = new Date().toISOString();
       this.status.lastReason = reason;
     } catch (error) {
@@ -139,7 +140,7 @@ export class LiveSyncService {
     this.status.running = true;
     try {
       this.ingestOpenCodeDatabases();
-      this.syncLocalMemoryState();
+      await this.syncLocalMemoryState();
       this.status.lastSyncAt = new Date().toISOString();
       this.status.lastReason = reason;
     } catch (error) {
@@ -161,10 +162,22 @@ export class LiveSyncService {
     }
   }
 
-  private syncLocalMemoryState(): void {
+  private async syncLocalMemoryState(): Promise<void> {
     this.status.memory.enabled = true;
     this.status.memory.lastSyncAt = new Date().toISOString();
-    this.status.memory.lastResult = "archive sync complete; semantic memory is built on demand";
+    const pending = this.store.getPendingMemoryManifests(Number(process.env.AGENT_HUB_MEMORY_BUILD_BATCH ?? "5"));
+    let built = 0;
+    for (const manifest of pending) {
+      try {
+        await buildMemoryFromSession(this.store, manifest.sessionId, { useLlm: process.env.AGENT_HUB_SYNC_USE_LLM === "true" });
+        this.store.markMemorySynced(manifest.sessionId, manifest.fileSha256);
+        built += 1;
+      } catch (error) {
+        this.store.markMemoryFailed(manifest.sessionId, manifest.fileSha256, error instanceof Error ? error.message : String(error));
+      }
+      await yieldToEventLoop();
+    }
+    this.status.memory.lastResult = built ? `built ${built} local memory item(s) and reviewable skill candidates` : "archive sync complete; no pending memory items";
   }
 
   private addError(error: unknown): void {

@@ -19,6 +19,7 @@
     "dashboard": "node dist/dashboard-main.js"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.30.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.10.0",
     "zod": "^3.25.76"

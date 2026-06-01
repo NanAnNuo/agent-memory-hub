@@ -17,6 +17,10 @@ let selectedSessionId = "";
 let selectedSession = null;
 let currentSessionCursor = 0;
 let currentSessionHasMore = false;
+let sessionRequestSeq = 0;
+const closedProjects = new Set();
+const openProjects = new Set();
+const closedThreads = new Set();
 
 async function api(path, options = {}) {
   if (!dashboardToken) throw new Error("请通过桌面入口或启动脚本打开 Agent Memory Hub");
@@ -91,13 +95,33 @@ function renderSessions(sessions) {
     event.stopPropagation();
     await deleteSession(button.dataset.deleteSession);
   }));
+  document.querySelectorAll("details.project-node[data-project-key]").forEach((node) => {
+    node.addEventListener("toggle", () => {
+      if (node.open) {
+        closedProjects.delete(node.dataset.projectKey);
+        openProjects.add(node.dataset.projectKey);
+      } else {
+        openProjects.delete(node.dataset.projectKey);
+        closedProjects.add(node.dataset.projectKey);
+      }
+    });
+  });
+  document.querySelectorAll("details.thread-node[data-thread-key]").forEach((node) => {
+    node.addEventListener("toggle", () => {
+      if (node.open) closedThreads.delete(node.dataset.threadKey);
+      else closedThreads.add(node.dataset.threadKey);
+    });
+  });
 }
 
 function renderProjectTree(sessions) {
   const projects = groupByProject(sessions);
   const forceOpen = Boolean($("projectFilter").value.trim() || $("search").value.trim());
-  return projects.map((project, index) => `
-    <details class="project-node" ${forceOpen || index < 6 ? "open" : ""}>
+  return projects.map((project, index) => {
+    const projectKey = project.key || project.path.toLowerCase();
+    const open = forceOpen || openProjects.has(projectKey) || (!closedProjects.has(projectKey) && index < 6);
+    return `
+    <details class="project-node" data-project-key="${escapeHtml(projectKey)}" ${open ? "open" : ""}>
       <summary>
         <span class="tree-check"></span>
         <span class="tree-caret">›</span>
@@ -107,14 +131,15 @@ function renderProjectTree(sessions) {
       </summary>
       <div class="thread-list">${project.threads.map(renderThread).join("")}</div>
     </details>
-  `).join("");
+  `; }).join("");
 }
 
 function renderThread(thread) {
   const session = thread.sessions[0];
   if (thread.sessions.length === 1) return renderSessionLeaf(session, "main");
+  const threadKey = thread.key || thread.name;
   return `
-    <details class="thread-node" open>
+    <details class="thread-node" data-thread-key="${escapeHtml(threadKey)}" ${closedThreads.has(threadKey) ? "" : "open"}>
       <summary>
         <span class="tree-caret">›</span>
         <span class="thread-icon">#</span>
@@ -146,11 +171,11 @@ function groupByProject(sessions) {
   for (const session of sessions) {
     const path = session.project || "no project";
     const key = path.toLowerCase();
-    if (!map.has(key)) map.set(key, { name: projectName(path), path, sessions: [], threadMap: new Map(), threads: [] });
+    if (!map.has(key)) map.set(key, { key, name: projectName(path), path, sessions: [], threadMap: new Map(), threads: [] });
     const project = map.get(key);
     project.sessions.push(session);
     const threadKey = session.sourceSessionId || session.sessionId;
-    if (!project.threadMap.has(threadKey)) project.threadMap.set(threadKey, { name: threadKey, sessions: [] });
+    if (!project.threadMap.has(threadKey)) project.threadMap.set(threadKey, { key: `${key}:${threadKey}`, name: threadKey, sessions: [] });
     project.threadMap.get(threadKey).sessions.push(session);
   }
   return [...map.values()].map((project) => ({
@@ -169,11 +194,15 @@ function newestTimestamp(sessions) {
 }
 
 async function showSession(sessionId) {
+  const requestSeq = ++sessionRequestSeq;
   selectedSessionId = sessionId;
   selectedSession = latestSessions.find((session) => session.sessionId === sessionId) || null;
   currentSessionCursor = 0;
   currentSessionHasMore = false;
-  const data = await api(`/api/session?id=${encodeURIComponent(sessionId)}&offset=0&limit=180`);
+  $("details").className = "callchain tall";
+  $("details").innerHTML = renderSessionHeader(selectedSession || { sessionId, sourceSessionId: null, client: "", lastTimestamp: null }) + `<div class="empty">正在加载首批对话内容...</div>`;
+  const data = await api(`/api/session?id=${encodeURIComponent(sessionId)}&offset=0&limit=60`);
+  if (requestSeq !== sessionRequestSeq) return;
   currentSessionCursor = data.nextOffset;
   currentSessionHasMore = data.hasMore;
   $("exportSessionId").value = sessionId;
@@ -185,7 +214,7 @@ async function showSession(sessionId) {
 
 async function loadMoreSessionEvents() {
   if (!selectedSessionId || !currentSessionHasMore) return;
-  const data = await api(`/api/session?id=${encodeURIComponent(selectedSessionId)}&offset=${currentSessionCursor}&limit=180`);
+  const data = await api(`/api/session?id=${encodeURIComponent(selectedSessionId)}&offset=${currentSessionCursor}&limit=80`);
   currentSessionCursor = data.nextOffset;
   currentSessionHasMore = data.hasMore;
   document.querySelector(".load-more-row")?.remove();
@@ -448,6 +477,26 @@ $("settingsForm").addEventListener("submit", async (event) => {
 
 $("testLlm").addEventListener("click", async () => {
   const result = await api("/api/settings/test-llm", { method: "POST", body: JSON.stringify({ llmBaseUrl: $("llmBaseUrl").value, llmApiKey: $("llmApiKey").value, llmModel: $("manualModel").value || $("llmModel").value }) });
+  $("settingsStatus").textContent = JSON.stringify(result, null, 2);
+});
+
+$("createBackup").addEventListener("click", async () => {
+  const result = await api("/api/backup/create", { method: "POST", body: JSON.stringify({ outputPath: $("backupOutputPath").value.trim() || undefined }) });
+  $("settingsStatus").textContent = JSON.stringify(result, null, 2);
+});
+
+$("restoreBackup").addEventListener("click", async () => {
+  const backupPath = $("restoreBackupPath").value.trim();
+  if (!backupPath) {
+    $("settingsStatus").textContent = "请先填写恢复来源目录。";
+    return;
+  }
+  const result = await api("/api/backup/restore", { method: "POST", body: JSON.stringify({ backupPath }) });
+  $("settingsStatus").textContent = `${JSON.stringify(result, null, 2)}\n\n恢复已暂存，重启 Agent Memory Hub 后生效。`;
+});
+
+$("runHealthCheck").addEventListener("click", async () => {
+  const result = await api("/api/health");
   $("settingsStatus").textContent = JSON.stringify(result, null, 2);
 });
 

@@ -9,6 +9,8 @@ Local memory workbench for Codex, Claude, and OpenCode.
 - Lightweight local memory items for cases, skill hints, and optional profiles.
 - Hub-managed skill promotion under the Hub data directory only.
 - DeepSeek/OpenAI-compatible settings with model import from `/v1/models`.
+- Optional embedding writes into a LanceDB table, with SQLite FTS fallback when embedding is not configured.
+- Backup and staged restore for `archive.db` plus Hub-managed skills.
 - MCP tools for archive search, local memory, context packs, and Hub skills.
 
 ## Launch
@@ -41,6 +43,7 @@ The Settings page supports DeepSeek/OpenAI-compatible providers:
 - optional embedding endpoint/model
 - optional profile memory
 - optional background sync flag
+- backup/restore and health check controls
 
 API keys are masked in API responses and must not be exported, logged, or written into generated skills.
 
@@ -49,3 +52,10 @@ API keys are masked in API responses and must not be exported, logged, or writte
 - Global skills: `C:\Users\22289\.memory-hub\skills\global\<slug>\SKILL.md`
 - Project skills: `C:\Users\22289\.memory-hub\skills\projects\<project-hash>\<slug>\SKILL.md`
 - Project scope is enforced by metadata and MCP filtering, not by writing into the project folder.
+
+Skill candidates can be created in two ways:
+
+- Agent-triggered: call `skill_candidate_create` through MCP when a reusable lesson is found.
+- Hub-triggered: sync/build memory creates reviewable candidates from archived sessions. Background sync uses local summarization by default; set `AGENT_HUB_SYNC_USE_LLM=true` only if you want the sync service to spend LLM tokens.
+
+At task start, agents should call `hub_skill_context_pack` with `project_root` and the task query, then inject the returned markdown into the current task context.

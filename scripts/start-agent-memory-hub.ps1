@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$HubRoot,
-    [int]$DashboardPort = 43121
+    [int]$DashboardPort = 43121,
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,7 +34,9 @@ try {
         throw "Dashboard token was not generated: $tokenPath"
     }
     $token = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
-    Start-Process "http://127.0.0.1:$DashboardPort/#token=$token"
+    if (-not $NoBrowser) {
+        Start-Process "http://127.0.0.1:$DashboardPort/#token=$token"
+    }
     Write-Output "Agent Memory Hub opened at http://127.0.0.1:$DashboardPort/"
 } catch {
     Write-Error $_

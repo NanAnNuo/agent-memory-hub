@@ -282,6 +282,38 @@ export function createArchiveServer(dataDir?: string): McpServer {
     ).slice(0, limit));
   });
 
+  server.registerTool("hub_skill_context_pack", {
+    title: "Build Hub Skill Context Pack",
+    description: "Return relevant Hub-managed skill contents for a new agent task. Call this at task start with the project root and user request, then inject the returned markdown into working context.",
+    inputSchema: { query: z.string().min(1), project_root: z.string().optional(), limit: z.number().int().min(1).max(10).default(5) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ query, project_root, limit }) => {
+    const lowered = query.toLowerCase();
+    const skills = store.listHubSkills(project_root).filter((skill) =>
+      !lowered || `${skill.title}\n${skill.reuseRule}`.toLowerCase().includes(lowered)
+    ).slice(0, limit);
+    return toolResult({
+      instruction: "Use these Hub-managed skills as task-local context only. Do not write them into native agent skill directories.",
+      skills: skills.map((skill) => ({ ...skill, content: readFileSync(skill.path, "utf8") })),
+      markdown: [
+        "# Hub Skill Context Pack",
+        "",
+        "Use the following Hub-managed skills when they match the current task. They are isolated in Agent Memory Hub and should not be copied into native agent skill directories.",
+        "",
+        ...skills.flatMap((skill) => [
+          `## ${skill.title}`,
+          "",
+          `- Scope: ${skill.scope}`,
+          `- Project: ${skill.projectRoot ?? "global"}`,
+          `- Skill ID: ${skill.skillId}`,
+          "",
+          readFileSync(skill.path, "utf8"),
+          ""
+        ])
+      ].join("\n")
+    });
+  });
+
   server.registerTool("hub_skill_get", {
     title: "Read Hub Skill",
     description: "Read one Hub-managed SKILL.md file by skill id.",

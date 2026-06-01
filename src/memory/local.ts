@@ -1,6 +1,10 @@
 import type { ArchiveStore } from "../archive/store.js";
 import type { HubSettings, MemoryItem, SessionManifest } from "../archive/types.js";
 import { readableConversationEvents } from "../archive/readable.js";
+import { redactSensitive } from "../shared/redact.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { upsertMemoryVector } from "./vector.js";
 
 export interface LocalMemorySearchResult {
   cases: MemoryItem[];
@@ -9,7 +13,7 @@ export interface LocalMemorySearchResult {
   degraded: boolean;
 }
 
-export async function buildMemoryFromSession(store: ArchiveStore, sessionId: string): Promise<{ memory: MemoryItem; candidateCreated: boolean }> {
+export async function buildMemoryFromSession(store: ArchiveStore, sessionId: string, options: { useLlm?: boolean } = {}): Promise<{ memory: MemoryItem; candidateCreated: boolean }> {
   const manifest = store.getManifest(sessionId);
   if (!manifest) {
     throw new Error(`Unknown session: ${sessionId}`);
@@ -17,7 +21,8 @@ export async function buildMemoryFromSession(store: ArchiveStore, sessionId: str
   const events = readableConversationEvents(store.getMessages(sessionId, 0, Math.min(manifest.eventCount, 120)));
   const transcript = events.map((event) => `${event.role ?? event.eventType}: ${event.searchableText}`).join("\n\n");
   const settings = store.getSettings();
-  const summary = settings.llmApiKey && settings.llmModel
+  const useLlm = options.useLlm ?? true;
+  const summary = useLlm && settings.llmApiKey && settings.llmModel
     ? await summarizeWithLlm(settings, transcript)
     : fallbackSummary(transcript);
   const memory = store.putMemoryItem({
@@ -31,16 +36,20 @@ export async function buildMemoryFromSession(store: ArchiveStore, sessionId: str
     summary,
     tags: [manifest.client, manifest.project ? "project" : "global"].filter(Boolean)
   });
-  return { memory, candidateCreated: false };
+  await writeEmbeddingRecord(store, settings, memory).catch(() => undefined);
+  const candidateCreated = createSkillCandidateFromSummary(store, manifest, summary, transcript);
+  return { memory, candidateCreated };
 }
 
 export function searchLocalMemory(store: ArchiveStore, query: string, projectRoot?: string, types: string[] = [], limit = 20): LocalMemorySearchResult {
   const items = store.searchMemory(query, projectRoot, types, limit);
+  const settings = store.getSettings();
+  const hasEmbeddingIndex = existsSync(join(store.getHubPaths().lanceDbDir, "memory_vectors.lance"));
   return {
     cases: items.filter((item) => item.type === "case"),
     skills: items.filter((item) => item.type === "skill_hint"),
     profiles: items.filter((item) => item.type === "profile"),
-    degraded: true
+    degraded: !(settings.embeddingModel && hasEmbeddingIndex)
   };
 }
 
@@ -88,6 +97,32 @@ async function summarizeWithLlm(settings: HubSettings, transcript: string): Prom
   return data.choices?.[0]?.message?.content?.trim() || fallbackSummary(transcript);
 }
 
+async function writeEmbeddingRecord(store: ArchiveStore, settings: HubSettings, memory: MemoryItem): Promise<void> {
+  if (!settings.embeddingBaseUrl || !settings.embeddingModel) {
+    return;
+  }
+  const response = await fetch(`${settings.embeddingBaseUrl.replace(/\/+$/, "")}/v1/embeddings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(settings.embeddingApiKey ? { Authorization: `Bearer ${settings.embeddingApiKey}` } : {})
+    },
+    body: JSON.stringify({ model: settings.embeddingModel, input: `${memory.title}\n${memory.summary}`.slice(0, 12000) }),
+    signal: AbortSignal.timeout(30000)
+  });
+  if (!response.ok) {
+    throw new Error(`Embedding failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+  const data = await response.json() as { data?: Array<{ embedding?: number[] }> };
+  const embedding = data.data?.[0]?.embedding;
+  if (!Array.isArray(embedding)) {
+    throw new Error("Embedding response did not contain a vector.");
+  }
+  const dir = store.getHubPaths().lanceDbDir;
+  mkdirSync(dir, { recursive: true });
+  await upsertMemoryVector(dir, memory, embedding);
+}
+
 function fallbackSummary(transcript: string): string {
   const normalized = transcript.replace(/\s+/g, " ").trim();
   return normalized.slice(0, 1800) || "No readable conversation text was available.";
@@ -96,4 +131,33 @@ function fallbackSummary(transcript: string): string {
 function titleFromSummary(summary: string, manifest: SessionManifest): string {
   const first = summary.split(/\r?\n/).map((line) => line.replace(/^#+\s*/, "").trim()).find(Boolean);
   return (first || manifest.sourceSessionId || manifest.sessionId).slice(0, 96);
+}
+
+function createSkillCandidateFromSummary(store: ArchiveStore, manifest: SessionManifest, summary: string, transcript: string): boolean {
+  const readableText = `${summary}\n${transcript}`.toLowerCase();
+  const hasReusableSignal = [
+    "skill", "workflow", "rule", "pitfall", "经验", "规则", "复用", "工作流", "踩坑", "修复", "调试", "配置", "ui", "测试"
+  ].some((token) => readableText.includes(token));
+  if (!hasReusableSignal || transcript.trim().length < 80) {
+    return false;
+  }
+  const title = titleFromSummary(summary, manifest).replace(/^[-*#\s]+/, "").slice(0, 80) || "Reusable agent workflow";
+  const candidateId = `auto-${manifest.sessionId}`;
+  const existing = store.getSkillCandidate(candidateId);
+  if (existing) {
+    return false;
+  }
+  store.putSkillCandidate({
+    candidateId,
+    scope: manifest.project ? "project" : "global",
+    type: "workflow",
+    title,
+    lesson: redactSensitive(summary).slice(0, 4000),
+    evidence: [`${manifest.client}:${manifest.sessionId}`, `source:${manifest.sourcePath}`],
+    reuseRule: `Use when a future task matches this session's problem pattern: ${title}`,
+    redactionStatus: "redacted",
+    promotionTarget: "skill",
+    projectRoot: manifest.project
+  });
+  return true;
 }

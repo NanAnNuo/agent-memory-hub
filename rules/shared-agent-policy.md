@@ -6,6 +6,8 @@
 - When delegation is justified, route focused read-only verification to a low-cost capable worker, bounded independent implementation/testing to a coding worker, and architecture or final high-risk review to the strongest available model.
 - When multiple agents may write code, assign non-overlapping worktrees and keep final integration in the controlling session.
 - Use `agent-archive` for conversation retrieval and `agent-orchestrator` for cross-agent dispatch when they are available.
+- At the start of project work, call `hub_skill_context_pack` when available with the current `project_root` and task query; inject only relevant Hub-managed skills into task context.
+- When a task yields a reusable workflow, pitfall, preference, or debugging rule, call `skill_candidate_create` to create a reviewable candidate. Do not promote it automatically.
 - In `agent-orchestrator`, the `agent` field is always the intended recipient, not the initiating client. For example, OpenCode sending work to Codex must use `agent=codex` and a `codex_*` model profile.
 - Inside an active Codex Desktop task, use its built-in sub-agent facility for Codex workers; do not recursively launch Codex CLI through the orchestrator unless that host scenario has been validated.
 - Do not copy tokens, API keys, bearer values, or other credentials into prompts, shared rules, archives intended for ordinary retrieval, or configuration synchronization output.

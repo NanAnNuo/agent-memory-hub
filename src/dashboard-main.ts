@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 import { URL } from "node:url";
 import { ArchiveStore } from "./archive/store.js";
+import { applyPendingRestore, createBackup, stageRestore } from "./archive/backup.js";
 import { exportSession } from "./archive/export.js";
 import { isReadableConversationEvent } from "./archive/readable.js";
 import { ensureHubDirectories, getHubPaths, getPackageRoot } from "./shared/config.js";
@@ -17,6 +19,7 @@ import { importModels, publicSettings, testLlm } from "./memory/llm.js";
 
 const paths = getHubPaths();
 ensureHubDirectories(paths);
+applyPendingRestore(paths);
 const archiveStore = new ArchiveStore(paths);
 const taskStore = new OrchestratorStore(paths);
 const syncService = new LiveSyncService(archiveStore);
@@ -143,7 +146,13 @@ const server = createServer(async (request, response) => {
         contextPackEnabled: booleanField(body, "contextPackEnabled", current.contextPackEnabled),
         healthCheckEnabled: booleanField(body, "healthCheckEnabled", current.healthCheckEnabled)
       });
+      if (next.backgroundSyncEnabled !== current.backgroundSyncEnabled) {
+        await setBackgroundSync(next.backgroundSyncEnabled);
+      }
       return json(response, publicSettings(next));
+    }
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      return json(response, healthStatus());
     }
     if (request.method === "POST" && url.pathname === "/api/settings/import-models") {
       const body = await readJsonBody(request);
@@ -180,6 +189,14 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/context-pack") {
       const body = await readJsonBody(request);
       return json(response, buildContextPack(archiveStore, requiredString(body, "sessionId"), numberField(body, "maxMessages", 40)));
+    }
+    if (request.method === "POST" && url.pathname === "/api/backup/create") {
+      const body = await readJsonBody(request);
+      return json(response, await createBackup(archiveStore, paths, stringField(body, "outputPath") || undefined));
+    }
+    if (request.method === "POST" && url.pathname === "/api/backup/restore") {
+      const body = await readJsonBody(request);
+      return json(response, stageRestore(paths, requiredString(body, "backupPath")));
     }
     if (request.method === "POST" && url.pathname === "/api/candidates") {
       const body = await readJsonBody(request);
@@ -317,6 +334,65 @@ function arrayField(body: Record<string, unknown>, key: string): string[] {
 function enumField<T extends string>(body: Record<string, unknown>, key: string, allowed: T[], fallback: T): T {
   const value = body[key];
   return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback;
+}
+
+function healthStatus(): Record<string, unknown> {
+  const settings = archiveStore.getSettings();
+  const taskName = "Agent Memory Hub Dashboard";
+  return {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    dataDir: paths.dataDir,
+    archiveDatabase: { path: paths.archiveDatabase, exists: existsSync(paths.archiveDatabase) },
+    skillsDir: { path: paths.skillsDir, exists: existsSync(paths.skillsDir), count: archiveStore.listHubSkills(undefined, true).length },
+    mcp: {
+      archiveEntry: join(getPackageRoot(), "dist", "archive-main.js"),
+      orchestratorEntry: join(getPackageRoot(), "dist", "orchestrator-main.js")
+    },
+    llm: {
+      configured: Boolean(settings.llmBaseUrl && settings.llmModel && settings.llmApiKey),
+      baseUrl: settings.llmBaseUrl,
+      model: settings.llmModel
+    },
+    backgroundSync: {
+      enabled: settings.backgroundSyncEnabled,
+      taskName,
+      windowsTaskQuery: `Get-ScheduledTask -TaskName '${taskName}'`
+    },
+    memory: {
+      pending: archiveStore.getPendingMemoryManifests(1000).length,
+      last: archiveStore.listMemorySync().slice(0, 5)
+    },
+    backup: {
+      defaultDir: join(paths.dataDir, "backups"),
+      pendingRestoreMarker: join(paths.dataDir, "restore-pending.json"),
+      restartRequired: existsSync(join(paths.dataDir, "restore-pending.json"))
+    }
+  };
+}
+
+async function setBackgroundSync(enabled: boolean): Promise<void> {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const script = join(getPackageRoot(), "scripts", "install-dashboard-service.ps1");
+  if (enabled) {
+    await execPowerShell(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-HubRoot", getPackageRoot()]);
+    return;
+  }
+  await execPowerShell(["-NoProfile", "-Command", "Unregister-ScheduledTask -TaskName 'Agent Memory Hub Dashboard' -Confirm:$false -ErrorAction SilentlyContinue"]);
+}
+
+function execPowerShell(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("powershell.exe", args, { windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr.trim() || stdout.trim() || error.message));
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 function loadOrCreateToken(): string {

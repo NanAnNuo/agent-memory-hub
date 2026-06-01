@@ -21,6 +21,14 @@ export class ArchiveStore {
     this.db.close();
   }
 
+  async backupDatabase(path: string): Promise<void> {
+    await this.db.backup(path);
+  }
+
+  getHubPaths(): HubPaths {
+    return this.paths;
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
@@ -223,6 +231,7 @@ export class ArchiveStore {
       this.db.prepare("DELETE FROM event_fts WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM memory_sync WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM memory_items WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
     })();
     return { deleted: true };
