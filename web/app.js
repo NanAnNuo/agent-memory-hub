@@ -290,16 +290,54 @@ function renderCandidates(candidates) {
   $("candidates").innerHTML = candidates.map(renderCandidateCard).join("") || `<div class="empty">暂无候选</div>`;
   document.querySelectorAll("[data-approve-candidate]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api("/api/candidates/promote", { method: "POST", body: JSON.stringify({ candidateId: button.dataset.approveCandidate, approved: true }) });
-      await refresh();
+      await handleCandidateAction(button, "approve");
     });
   });
   document.querySelectorAll("[data-reject-candidate]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/candidates/${encodeURIComponent(button.dataset.rejectCandidate)}`, { method: "DELETE" });
-      await refresh();
+      await handleCandidateAction(button, "reject");
     });
   });
+}
+
+async function handleCandidateAction(button, action) {
+  const card = button.closest(".candidate-card");
+  const candidateId = action === "approve" ? button.dataset.approveCandidate : button.dataset.rejectCandidate;
+  setCandidateBusy(card, action === "approve" ? "正在写入 Hub..." : "正在删除...");
+  try {
+    if (action === "approve") {
+      await api("/api/candidates/promote", { method: "POST", body: JSON.stringify({ candidateId, approved: true }) });
+      renderSkills(await api("/api/skills?includeDisabled=true"));
+    } else {
+      await api(`/api/candidates/${encodeURIComponent(candidateId)}`, { method: "DELETE" });
+    }
+    removeCandidateCard(card);
+  } catch (error) {
+    clearCandidateBusy(card, error.message);
+  }
+}
+
+function setCandidateBusy(card, label) {
+  if (!card) return;
+  card.classList.add("busy");
+  card.querySelectorAll("button").forEach((node) => node.disabled = true);
+  const status = card.querySelector(".candidate-status");
+  if (status) status.innerHTML = `<span class="spinner"></span>${escapeHtml(label)}`;
+}
+
+function clearCandidateBusy(card, label) {
+  if (!card) return;
+  card.classList.remove("busy");
+  card.querySelectorAll("button").forEach((node) => node.disabled = false);
+  const status = card.querySelector(".candidate-status");
+  if (status) status.textContent = label || "操作失败";
+}
+
+function removeCandidateCard(card) {
+  card?.remove();
+  const count = document.querySelectorAll(".candidate-card").length;
+  $("candidateCount").textContent = `${count} 条`;
+  if (!count) $("candidates").innerHTML = `<div class="empty">暂无候选</div>`;
 }
 
 function renderCandidateCard(candidate) {
