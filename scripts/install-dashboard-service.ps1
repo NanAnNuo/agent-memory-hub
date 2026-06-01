@@ -10,7 +10,6 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($HubRoot)) {
     $HubRoot = Split-Path -Parent $PSScriptRoot
 }
-$node = (Get-Command node -ErrorAction Stop).Source
 $entry = Join-Path $HubRoot 'scripts\start-agent-memory-hub.ps1'
 if (-not (Test-Path -LiteralPath $entry)) {
     throw "Launcher missing: $entry."

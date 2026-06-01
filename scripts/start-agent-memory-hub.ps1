@@ -15,6 +15,14 @@ function Test-Port {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
+function Resolve-Node {
+    $bundled = Join-Path $HubRoot 'node.exe'
+    if (Test-Path -LiteralPath $bundled) {
+        return $bundled
+    }
+    return (Get-Command node -ErrorAction Stop).Source
+}
+
 Push-Location $HubRoot
 try {
     if (-not (Test-Path -LiteralPath (Join-Path $HubRoot 'dist\dashboard-main.js'))) {
@@ -23,8 +31,18 @@ try {
 
     $tokenPath = Join-Path $HOME '.memory-hub\dashboard.token'
     if (-not (Test-Port -Port $DashboardPort)) {
-        $node = (Get-Command node -ErrorAction Stop).Source
-        Start-Process -FilePath $node -ArgumentList @((Join-Path $HubRoot 'dist\dashboard-main.js')) -WorkingDirectory $HubRoot -WindowStyle Hidden
+        $node = Resolve-Node
+        $previousPort = $env:AGENT_HUB_DASHBOARD_PORT
+        $env:AGENT_HUB_DASHBOARD_PORT = [string]$DashboardPort
+        try {
+            Start-Process -FilePath $node -ArgumentList @((Join-Path $HubRoot 'dist\dashboard-main.js')) -WorkingDirectory $HubRoot -WindowStyle Hidden
+        } finally {
+            if ($null -eq $previousPort) {
+                Remove-Item Env:\AGENT_HUB_DASHBOARD_PORT -ErrorAction SilentlyContinue
+            } else {
+                $env:AGENT_HUB_DASHBOARD_PORT = $previousPort
+            }
+        }
     }
 
     for ($index = 0; $index -lt 40 -and -not (Test-Path -LiteralPath $tokenPath); $index++) {
@@ -32,6 +50,12 @@ try {
     }
     if (-not (Test-Path -LiteralPath $tokenPath)) {
         throw "Dashboard token was not generated: $tokenPath"
+    }
+    for ($index = 0; $index -lt 40 -and -not (Test-Port -Port $DashboardPort); $index++) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not (Test-Port -Port $DashboardPort)) {
+        throw "Dashboard did not start listening on http://127.0.0.1:$DashboardPort/"
     }
     $token = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
     if (-not $NoBrowser) {

@@ -16,7 +16,8 @@
     "test": "vitest run",
     "check": "npm run build && npm run test",
     "ingest": "node dist/cli.js ingest",
-    "dashboard": "node dist/dashboard-main.js"
+    "dashboard": "node dist/dashboard-main.js",
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.30.0",

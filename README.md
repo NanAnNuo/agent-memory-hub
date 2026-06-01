@@ -31,6 +31,16 @@ The launcher starts only Agent Memory Hub. Docker and EverCore are not required.
 - Hub skills: `C:\Users\22289\.memory-hub\skills`
 - Exports: `C:\Users\22289\.memory-hub\exports`
 
+## Windows Package
+
+Build a self-contained Windows folder with `AgentMemoryHub.exe`, bundled `node.exe`, production `node_modules`, `dist`, and `web`:
+
+```powershell
+npm run package:win
+```
+
+The package is written to `release\AgentMemoryHub-win-x64`. Double-click `AgentMemoryHub.exe` to start the local dashboard and open the browser. Native dependencies such as SQLite and LanceDB stay as files in the package instead of being forced into a fragile single-file executable.
+
 Approved skills are never written to Codex, Claude, OpenCode, or business project skill directories. Agents should load them through the Hub MCP tools.
 
 ## Settings
