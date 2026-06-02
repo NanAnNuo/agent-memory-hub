@@ -20,9 +20,37 @@ if ($resolvedOutput.Length -le 10 -or ($resolvedOutput -notmatch 'AgentMemoryHub
     throw "Refusing to package into an unsafe output path: $resolvedOutput"
 }
 
+function Invoke-Checked {
+    param(
+        [scriptblock]$Command,
+        [string]$Label
+    )
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Remove-DevelopmentDependencies {
+    param([string]$AppRoot)
+    $nodeModules = Join-Path $AppRoot 'node_modules'
+    foreach ($path in @(
+        (Join-Path $nodeModules 'playwright'),
+        (Join-Path $nodeModules 'playwright-core'),
+        (Join-Path $nodeModules 'vitest'),
+        (Join-Path $nodeModules 'typescript'),
+        (Join-Path $nodeModules '@types'),
+        (Join-Path $nodeModules '@vitest'),
+        (Join-Path $nodeModules '@playwright'),
+        (Join-Path $nodeModules '.vite')
+    )) {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Push-Location $HubRoot
 try {
-    npm run build
+    Invoke-Checked -Label 'npm run build' -Command { npm run build }
 
     if (Test-Path -LiteralPath $resolvedOutput) {
         Remove-Item -LiteralPath $resolvedOutput -Recurse -Force
@@ -40,12 +68,7 @@ try {
     $nodePath = (Get-Command node -ErrorAction Stop).Source
     Copy-Item -LiteralPath $nodePath -Destination (Join-Path $appRoot 'node.exe') -Force
 
-    Push-Location $appRoot
-    try {
-        npm prune --omit=dev --no-audit --no-fund
-    } finally {
-        Pop-Location
-    }
+    Remove-DevelopmentDependencies -AppRoot $appRoot
 
     $launcherSource = Join-Path $resolvedOutput 'AgentMemoryHubLauncher.cs'
     $launcherExe = Join-Path $resolvedOutput "$ProductName.exe"
