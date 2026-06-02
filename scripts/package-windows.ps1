@@ -58,7 +58,7 @@ try {
     $appRoot = Join-Path $resolvedOutput 'app'
     New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 
-    foreach ($name in @('dist', 'web', 'config', 'rules', 'scripts', 'node_modules')) {
+    foreach ($name in @('dist', 'web', 'assets', 'config', 'rules', 'scripts', 'node_modules')) {
         Copy-Item -LiteralPath (Join-Path $HubRoot $name) -Destination (Join-Path $appRoot $name) -Recurse -Force
     }
     foreach ($name in @('package.json', 'package-lock.json', 'README.md')) {
@@ -72,6 +72,10 @@ try {
 
     $launcherSource = Join-Path $resolvedOutput 'AgentMemoryHubLauncher.cs'
     $launcherExe = Join-Path $resolvedOutput "$ProductName.exe"
+    $launcherIcon = Join-Path $HubRoot 'assets\app-icon.ico'
+    if (-not (Test-Path -LiteralPath $launcherIcon)) {
+        throw "Launcher icon missing: $launcherIcon"
+    }
     $source = @'
 using System;
 using System.Diagnostics;
@@ -164,7 +168,7 @@ public static class AgentMemoryHubLauncher
     if (-not $csc) {
         throw "C# compiler not found. Install .NET Framework build tools or run from a machine with csc.exe."
     }
-    & $csc /nologo /target:winexe /out:$launcherExe /reference:System.Windows.Forms.dll $launcherSource
+    & $csc /nologo /target:winexe /out:$launcherExe /win32icon:$launcherIcon /reference:System.Windows.Forms.dll $launcherSource
     if ($LASTEXITCODE -ne 0) {
         throw "Launcher compilation failed."
     }

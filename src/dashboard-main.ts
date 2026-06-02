@@ -259,7 +259,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     const staticPath = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
-    if (!["index.html", "app.js", "styles.css"].includes(staticPath)) {
+    if (!["index.html", "app.js", "styles.css", "icon.png"].includes(staticPath)) {
       response.writeHead(404).end("Not Found");
       return;
     }
@@ -289,6 +289,7 @@ function contentType(path: string): string {
   switch (extname(path)) {
     case ".css": return "text/css; charset=utf-8";
     case ".js": return "text/javascript; charset=utf-8";
+    case ".png": return "image/png";
     default: return "text/html; charset=utf-8";
   }
 }
