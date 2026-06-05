@@ -184,6 +184,18 @@ public static class AgentMemoryHubLauncher
     )
     Set-Content -LiteralPath (Join-Path $resolvedOutput 'Start-AgentMemoryHub.cmd') -Value $cmd -Encoding ASCII
 
+    $registerMcpCmd = @(
+        '@echo off',
+        'setlocal',
+        'cd /d "%~dp0"',
+        'echo This will register Agent Memory Hub MCP servers in Claude Desktop and available local clients.',
+        'echo Claude/Codex may need to be fully restarted after registration.',
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0app\scripts\publish-integrations.ps1" -HubRoot "%~dp0app" -RegisterMcp -AllowExistingCredentialUse',
+        'echo.',
+        'pause'
+    )
+    Set-Content -LiteralPath (Join-Path $resolvedOutput 'Register-MCP.cmd') -Value $registerMcpCmd -Encoding ASCII
+
     $size = (Get-ChildItem -LiteralPath $resolvedOutput -Recurse -File | Measure-Object Length -Sum).Sum
     [pscustomobject]@{
         output = $resolvedOutput

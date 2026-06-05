@@ -91,6 +91,8 @@ Agent Memory Hub.cmd
 
 ### 接入 Claude Desktop
 
+发布包用户可直接双击解压目录中的 `Register-MCP.cmd`。源码运行时使用下面命令：
+
 先确保已经构建：
 
 ```powershell
@@ -516,6 +518,8 @@ Agent Memory Hub.cmd
 Double-click it to start Hub and open the browser.
 
 ### Connect Claude Desktop
+
+Packaged users can double-click `Register-MCP.cmd` in the extracted release directory. Source users can run:
 
 Build first:
 

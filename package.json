@@ -1,6 +1,6 @@
 {
   "name": "agent-memory-hub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Local multi-agent archive, lightweight memory, isolated skills, and conversation export.",
   "license": "MIT",

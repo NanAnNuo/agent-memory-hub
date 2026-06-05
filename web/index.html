@@ -112,7 +112,6 @@
             <a href="#memory-settings">记忆与同步</a>
             <a href="#feature-settings">实用功能</a>
             <a href="#backup-settings">备份恢复</a>
-            <a href="#readiness-settings">完善度检查</a>
           </aside>
           <form id="settingsForm" class="settings-content">
             <section id="llm-settings" class="settings-card">
@@ -175,15 +174,6 @@
                 <button type="button" id="createBackup">创建备份</button>
                 <button type="button" id="restoreBackup">暂存恢复</button>
                 <button type="button" id="runHealthCheck">运行健康检查</button>
-              </div>
-            </section>
-
-            <section id="readiness-settings" class="settings-card">
-              <header><div><h2>未完善项评估</h2><p>当前项目的必须功能完成度。</p></div></header>
-              <div class="readiness-list">
-                <div><strong>已完成</strong><span>统一侧栏、Hub skill 隔离、基础同步、导出、恢复上下文、模型配置、LanceDB 向量写入、备份/恢复、MCP skill 上下文包、设置驱动后台同步。</span></div>
-                <div><strong>可增强</strong><span>候选质量评分、批量清理策略、打包体积优化、更多 agent 数据源适配。</span></div>
-                <div><strong>必须补齐</strong><span>暂无阻断使用的必须项；未配置 embedding 时会自动降级为 SQLite FTS。</span></div>
               </div>
             </section>
 

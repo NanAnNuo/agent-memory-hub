@@ -17,6 +17,19 @@ $claudeDesktopConfig = Join-Path $env:LOCALAPPDATA 'Claude-3p\claude_desktop_con
 $markerStart = '<!-- agent-collaboration-hub:start -->'
 $markerEnd = '<!-- agent-collaboration-hub:end -->'
 
+function Resolve-NodeRuntime {
+    param([string]$Root)
+    foreach ($candidate in @(
+        (Join-Path $Root 'node.exe'),
+        (Join-Path $Root 'app\node.exe')
+    )) {
+        if (Test-Path -LiteralPath $candidate) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+    return (Get-Command node -ErrorAction Stop).Source
+}
+
 function Set-ManagedRuleBlock {
     param([string]$Path, [string]$Text)
     $directory = Split-Path -Parent $Path
@@ -123,7 +136,7 @@ if ($RegisterMcp) {
     foreach ($path in @($archiveMain, $orchestratorMain)) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required executable or build output missing: $path" }
     }
-    $node = (Get-Command node -ErrorAction Stop).Source
+    $node = Resolve-NodeRuntime -Root $HubRoot
     $archiveCommand = "`"$node`" `"$archiveMain`""
     $orchestratorCommand = "`"$node`" `"$orchestratorMain`""
 
