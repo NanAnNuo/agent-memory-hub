@@ -52,7 +52,7 @@ function Publish-AghubMcp {
     param([string]$Agent, [string]$Name, [string]$Command)
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & $aghub --agent $Agent -g add mcps --name $Name --command $Command | Out-Null
+    & $aghub --agent $Agent -g add mcps --name $Name --command $Command 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         & $aghub --agent $Agent -g update mcps $Name --command $Command | Out-Null
         if ($LASTEXITCODE -ne 0) {
